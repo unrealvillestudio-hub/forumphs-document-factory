@@ -66,6 +66,7 @@ export async function createJob(state: Partial<JobState>): Promise<string | null
     method: 'POST',
     headers: { 'Prefer': 'return=representation' },
     body: JSON.stringify({
+      brand_id: 'ForumPHs',
       stage: state.stage || 'upload',
       ph_name: state.parsed?.skeleton?.ph_name,
       assembly_type: state.parsed?.skeleton?.assembly_type,

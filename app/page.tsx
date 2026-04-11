@@ -206,17 +206,30 @@ export default function Home() {
         alignItems: 'center',
         justifyContent: 'space-between',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ color: 'var(--amatista)', fontSize: 20 }}>⬡</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{
-            fontFamily: 'EB Garamond, serif',
-            fontSize: 16,
+            fontFamily: 'Cormorant Garamond, serif',
+            fontSize: 15,
+            fontStyle: 'italic',
             color: 'var(--parch)',
-            letterSpacing: '0.02em',
-          }}>
-            ForumPHs <span style={{ color: 'var(--parch-dim)', margin: '0 6px' }}>·</span>
-            <span style={{ color: 'var(--amatista-light)' }}>Document Factory</span>
-          </span>
+          }}>Forum</span>
+          <span style={{
+            fontFamily: 'DM Sans, sans-serif',
+            fontSize: 12,
+            fontWeight: 700,
+            letterSpacing: '0.12em',
+            color: 'var(--amatista-light)',
+            textTransform: 'uppercase',
+          }}>PHs</span>
+          <span style={{ color: 'rgba(200,196,190,0.25)', margin: '0 6px' }}>·</span>
+          <span style={{
+            fontFamily: 'DM Sans, sans-serif',
+            fontSize: 11,
+            fontWeight: 500,
+            letterSpacing: '0.12em',
+            textTransform: 'uppercase',
+            color: 'var(--parch-dim)',
+          }}>Document Factory</span>
         </div>
 
         {/* Step indicator */}
@@ -347,7 +360,7 @@ export default function Home() {
         )}
       </div>
 
-      {/* Footer */}
+      {/* Footer — BP_BRAND_UNRLVL_v1.2 · 3-col · border-top 2px #00FFD1 */}
       <div style={{
         position: 'fixed',
         bottom: 0,
@@ -356,20 +369,52 @@ export default function Home() {
         borderTop: '2px solid #00FFD1',
         background: 'rgba(28,34,51,0.98)',
         padding: '10px 32px',
-        display: 'flex',
-        justifyContent: 'space-between',
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr 1fr',
         alignItems: 'center',
         fontSize: 11,
         color: 'var(--parch-dim)',
+        backdropFilter: 'blur(12px)',
       }}>
-        <div>
-          <span style={{ color: 'var(--amatista-light)' }}>ForumPHs</span>
-          {' · '}Document Factory v1.4
-          {' · '}Skill ICR — Actas PH Panamá
+        {/* Col 1 — ForumPHs wordmark + descriptor */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{
+            fontFamily: 'Cormorant Garamond, serif',
+            fontSize: 13,
+            fontStyle: 'italic',
+            color: 'var(--parch)',
+            letterSpacing: '0.02em',
+          }}>
+            Forum
+          </span>
+          <span style={{
+            fontFamily: 'DM Sans, sans-serif',
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: '0.12em',
+            color: 'var(--amatista-light)',
+            textTransform: 'uppercase',
+          }}>
+            PHs
+          </span>
+          <span style={{ color: 'rgba(200,196,190,0.2)', margin: '0 4px' }}>·</span>
+          <span style={{ color: 'var(--parch-dim)', letterSpacing: '0.04em' }}>Document Factory v1.4</span>
         </div>
-        <div>
-          Designed & Developed by{' '}
-          <span style={{ color: 'var(--parch)' }}>Unreal&gt;ille Studio</span>
+        {/* Col 2 — © rights (centered) */}
+        <div style={{ textAlign: 'center', color: 'rgba(200,196,190,0.35)', letterSpacing: '0.05em' }}>
+          © {new Date().getFullYear()} ForumPHs · Actas PH Panamá · Ley 284 de 2022
+        </div>
+        {/* Col 3 — UNRLVL signature (right-aligned) */}
+        <div style={{ textAlign: 'right' }}>
+          Designed &amp; Developed by{' '}
+          <span style={{
+            fontFamily: 'DM Sans, sans-serif',
+            fontWeight: 600,
+            color: 'var(--parch)',
+            letterSpacing: '0.02em',
+          }}>
+            Unreal&gt;ille Studio
+          </span>
         </div>
       </div>
     </div>

@@ -47,6 +47,11 @@ body {
   from { width: 0%; }
 }
 
+@keyframes prompt-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
 .fade-in { animation: fadeSlideIn 0.4s ease forwards; }
 .pulse-ring { animation: pulse-amatista 2s infinite; }
 .spin-slow { animation: spin-slow 2s linear infinite; }
