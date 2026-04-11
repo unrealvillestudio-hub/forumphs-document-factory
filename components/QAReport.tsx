@@ -94,17 +94,17 @@ export default function QAReportView({ report, wordCount, filename, onDownload, 
           padding: '16px',
         }}>
           <div style={{ fontSize: 11, color: 'var(--parch-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
-            Palabras
+            Completeness
           </div>
-          <div style={{ fontSize: 24, color: wcColor, fontWeight: 600 }}>
-            {wordCount.toLocaleString()}
+          <div style={{ fontSize: 24, color: report.completeness ? (report.completeness.score >= 80 ? '#4ADE80' : report.completeness.score >= 60 ? '#FBBF24' : 'var(--terra)') : 'var(--parch-dim)', fontWeight: 600 }}>
+            {report.completeness ? `${report.completeness.score}%` : '—'}
           </div>
           <div style={{ fontSize: 11, color: 'var(--parch-dim)', marginTop: 4 }}>
-            {wcPct}% del target (~18,000)
+            {report.completeness ? `${report.completeness.items.filter(i => i.passed).length}/${report.completeness.items.length} elementos OK` : 'Sin datos'}
           </div>
           <div className="wc-bar" style={{ marginTop: 8 }}>
-            <div className={`wc-bar-fill ${wcPct >= 85 && wcPct <= 115 ? 'ok' : wcPct > 115 ? 'over' : ''}`}
-              style={{ width: `${Math.min(wcPct, 130)}%` }} />
+            <div className={`wc-bar-fill ${report.completeness && report.completeness.score >= 80 ? 'ok' : ''}`}
+              style={{ width: `${report.completeness?.score || 0}%` }} />
           </div>
         </div>
 
@@ -208,6 +208,52 @@ export default function QAReportView({ report, wordCount, filename, onDownload, 
               + {report.errors.length - 20} errores más…
             </div>
           )}
+        </div>
+      )}
+
+      {/* Completeness breakdown */}
+      {report.completeness && (
+        <div style={{
+          background: 'var(--carbon-light)',
+          border: '1px solid rgba(92,52,114,0.2)',
+          borderRadius: 10,
+          padding: '16px 20px',
+          marginBottom: 24,
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--parch-dim)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              Completeness — {report.completeness.score}%
+            </div>
+            <div style={{
+              fontSize: 11,
+              padding: '3px 10px',
+              borderRadius: 4,
+              background: report.completeness.score >= 80 ? 'rgba(74,222,128,0.15)' : 'rgba(196,98,45,0.15)',
+              color: report.completeness.score >= 80 ? '#4ADE80' : 'var(--terra)',
+              fontWeight: 600,
+            }}>
+              {report.completeness.items.filter(i => i.passed).length}/{report.completeness.items.length} OK
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {report.completeness.items.map((item, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                <span style={{ fontSize: 13, color: item.passed ? '#4ADE80' : 'var(--terra)', flexShrink: 0, marginTop: 1 }}>
+                  {item.passed ? '✓' : '✗'}
+                </span>
+                <div style={{ flex: 1 }}>
+                  <span style={{ fontSize: 13, color: item.passed ? 'var(--parch-dim)' : 'var(--parch)' }}>
+                    {item.label}
+                  </span>
+                  {item.detail && (
+                    <span style={{ fontSize: 11, color: 'var(--parch-dim)', opacity: 0.6, marginLeft: 8 }}>
+                      {item.detail}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

@@ -145,12 +145,24 @@ export type QAErrorType =
   | 'GENDER_MISMATCH'
   | 'SPOKEN_WORD'
 
+export interface CompletenessItem {
+  label: string
+  passed: boolean
+  detail?: string
+}
+
+export interface CompletenessReport {
+  score: number
+  items: CompletenessItem[]
+}
+
 export interface QAReport {
   total_errors: number
   by_type: Partial<Record<QAErrorType, number>>
   errors: QAError[]
   word_count: number
-  word_count_pct?: number  // % of reference ~18000
+  word_count_pct?: number
+  completeness?: CompletenessReport
   passed: boolean
   verdict: 'PASS' | 'WARN' | 'FAIL' | 'STOP'
 }

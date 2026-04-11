@@ -5,6 +5,7 @@ import type { DebateBlock } from '@/lib/types'
 
 interface ProcessingPipelineProps {
   blocks: DebateBlock[]
+  skeleton?: { agenda_items?: { number: number; title: string }[] }
   onComplete: (formalizedBlocks: DebateBlock[]) => void
 }
 
@@ -22,7 +23,7 @@ interface ProgressEvent {
   error?: string
 }
 
-export default function ProcessingPipeline({ blocks, onComplete }: ProcessingPipelineProps) {
+export default function ProcessingPipeline({ blocks, skeleton, onComplete }: ProcessingPipelineProps) {
   const [events, setEvents] = useState<ProgressEvent[]>([])
   const [done, setDone] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -41,7 +42,7 @@ export default function ProcessingPipeline({ blocks, onComplete }: ProcessingPip
         const res = await fetch('/api/formalize', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ blocks }),
+          body: JSON.stringify({ blocks, skeleton }),
         })
 
         if (!res.ok || !res.body) {

@@ -5,6 +5,7 @@ import UploadZone from '@/components/UploadZone'
 import PreflightForm from '@/components/PreflightForm'
 import ProcessingPipeline from '@/components/ProcessingPipeline'
 import QAReportView from '@/components/QAReport'
+import { createJob, updateJob, loadJob, saveJobId, loadJobId, clearJobId } from '@/lib/supabaseSession'
 import type {
   ParsedHypalZip,
   PreflightGap,
@@ -41,6 +42,7 @@ export default function Home() {
   const [output, setOutput] = useState<DocOutput | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
+  const [jobId, setJobId] = useState<string | null>(null)
 
   // ---- Step 1: Upload & Parse ZIP ----
   const handleFileSelected = async (file: File) => {
@@ -64,6 +66,9 @@ export default function Home() {
 
       setParsed(data.parsed)
       setGaps(data.preflight_gaps || [])
+      // Persist job
+      const jid = await createJob({ stage: 'preflight', parsed: data.parsed })
+      if (jid) { setJobId(jid); saveJobId(jid) }
       setStep('preflight')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error desconocido')
@@ -105,12 +110,14 @@ export default function Home() {
     // Prepare blocks for formalization (non-skip blocks only)
     const toFormalize = parsed.debates.filter(b => !b.skip)
     setBlocksToFormalize(toFormalize)
+    if (jobId) updateJob(jobId, { stage: 'formalizing', preflight: pf })
     setStep('formalizing')
   }
 
   // ---- Step 3: Formalization complete ----
   const handleFormalizationComplete = async (blocks: DebateBlock[]) => {
     setFormalizedBlocks(blocks)
+    if (jobId) updateJob(jobId, { stage: 'generating' as any, formalized_blocks: blocks })
     setStep('generating')
     await generateDocx(blocks)
   }
@@ -136,6 +143,7 @@ export default function Home() {
 
       if (!data.success) throw new Error(data.error || 'Error al generar el acta')
 
+      if (jobId) updateJob(jobId, { stage: 'done' as any, qa_report: data.qa_report, output_filename: data.filename })
       setOutput({
         docx_base64: data.docx_base64,
         filename: data.filename,
@@ -169,6 +177,8 @@ export default function Home() {
   // ---- Reset ----
   const handleReset = () => {
     setStep('upload')
+    clearJobId()
+    setJobId(null)
     setParsed(null)
     setGaps([])
     setPreflight(null)
@@ -272,6 +282,7 @@ export default function Home() {
         {step === 'formalizing' && blocksToFormalize.length > 0 && (
           <ProcessingPipeline
             blocks={blocksToFormalize}
+            skeleton={parsed?.skeleton}
             onComplete={handleFormalizationComplete}
           />
         )}

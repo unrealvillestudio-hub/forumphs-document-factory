@@ -36,7 +36,12 @@ Oral: "Sí, de acuerdo, perfecto."
 Respuesta: NULL`
 
 export async function POST(req: NextRequest): Promise<Response> {
-  const { blocks }: { blocks: DebateBlock[] } = await req.json()
+  const { blocks, skeleton }: { blocks: DebateBlock[], skeleton?: { agenda_items?: { number: number; title: string }[] } } = await req.json()
+
+    // Apply section assigner before formalization so blocks carry agenda_section
+    const { assignBlocksToSections } = await import('@/lib/processors/sectionAssigner')
+    const agendaItems = skeleton?.agenda_items || []
+    const assignedBlocks = assignBlocksToSections(blocks, agendaItems)
 
   const encoder = new TextEncoder()
 
@@ -44,8 +49,8 @@ export async function POST(req: NextRequest): Promise<Response> {
     async start(controller) {
       const results: DebateBlock[] = []
 
-      for (let i = 0; i < blocks.length; i++) {
-        const block = blocks[i]
+      for (let i = 0; i < assignedBlocks.length; i++) {
+        const block = assignedBlocks[i]
 
         // Skip logistica, empty, or already-marked-skip
         if (block.skip || block.speaker_role === 'logistica' || !block.text_cleaned) {
