@@ -19,7 +19,7 @@ interface BatchLog {
   error?: string
 }
 
-const BATCH_SIZE = 40
+const BATCH_SIZE = 20
 
 export default function ProcessingPipeline({ blocks, skeleton, onComplete }: ProcessingPipelineProps) {
   const [logs, setLogs] = useState<BatchLog[]>([])

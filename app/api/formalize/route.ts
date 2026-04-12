@@ -9,7 +9,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { DebateBlock } from '@/lib/types'
 
 export const runtime = 'nodejs'
-export const maxDuration = 55  // Under Vercel's 60s limit with buffer
+export const maxDuration = 55
 
 const SYSTEM_PROMPT = `Eres un redactor especializado en Actas de Asamblea de Propiedad Horizontal en Panamá. 
 Tu función es convertir fragmentos de habla oral en párrafos formales de tercera persona para el acta legal.
@@ -98,8 +98,7 @@ Escribe el párrafo formal para el acta, o responde NULL.`
         console.error(`Block ${i} error:`, err)
       }
 
-      // Small delay to respect rate limits
-      await new Promise(r => setTimeout(r, 80))
+      // No delay — API handles rate limiting
     }
 
     return NextResponse.json({

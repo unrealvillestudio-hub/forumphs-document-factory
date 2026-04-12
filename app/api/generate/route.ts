@@ -188,7 +188,11 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
           })
         ),
       ]
-      docChildren.push(new Table({ rows: tableRows, width: { size: 100, type: WidthType.PERCENTAGE } }))
+      docChildren.push(new Table({
+        rows: tableRows,
+        width: { size: 9360, type: WidthType.DXA },  // full page width in twips
+        columnWidths: [1800, 4500, 3060],  // Unit | Owner | Represented — in twips
+      }))
       docChildren.push(emptyLine())
     }
 
