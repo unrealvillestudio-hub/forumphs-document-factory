@@ -16,7 +16,7 @@ import type {
   QAReport,
 } from '@/lib/types'
 
-type Step = 'upload' | 'preflight' | 'formalizing' | 'generating' | 'done' | 'error'
+type Step = 'upload' | 'preflight' | 'formalizing' | 'generating' | 'qa' | 'icr' | 'done' | 'error'
 
 interface DocOutput {
   docx_base64: string
@@ -31,7 +31,9 @@ const STEPS = [
   { id: 'preflight', label: 'Pre-flight' },
   { id: 'formalizing', label: 'Paso 0.5' },
   { id: 'generating', label: 'Generar' },
-  { id: 'done', label: 'QA + ICR + Descarga' },
+  { id: 'qa', label: 'QA' },
+  { id: 'icr', label: 'ICR' },
+  { id: 'done', label: 'Descarga' },
 ]
 
 export default function Home() {
@@ -154,27 +156,31 @@ export default function Home() {
         word_count: data.word_count,
         qa_report: data.qa_report,
       })
-      setStep('done')
-      // Run ICR — second QA layer
-      if (data.acta_text && parsed) { // acta_text available from generate
-        setIcrLoading(true)
-        try {
-          const icrRes = await fetch('/api/icr', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ acta_text: data.acta_text, parsed }),
-          })
-          const icrData = await icrRes.json()
-          if (icrData.success) setIcrReport(icrData.report)
-        } catch { /* ICR is non-blocking */ }
-        finally { setIcrLoading(false) }
-      }
+      setStep('qa')
+      // ICR is triggered manually by user clicking "Continuar → ICR"
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al generar')
       setStep('error')
     } finally {
       setGenerating(false)
     }
+  }
+
+  // ---- ICR (user-triggered) ----
+  const runICR = async () => {
+    if (!output?.acta_text || !parsed) { setStep('icr'); return }
+    setIcrLoading(true)
+    setStep('icr')
+    try {
+      const icrRes = await fetch('/api/icr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ acta_text: output.acta_text, parsed }),
+      })
+      const icrData = await icrRes.json()
+      if (icrData.success) setIcrReport(icrData.report)
+    } catch { /* non-blocking */ }
+    finally { setIcrLoading(false) }
   }
 
   // ---- Download ----
@@ -328,18 +334,50 @@ export default function Home() {
           </div>
         )}
 
-        {/* Done */}
-        {step === 'done' && output && (
-          <>
+        {/* QA step */}
+        {(step === 'qa' || step === 'icr' || step === 'done') && output && (
           <QAReportView
             report={output.qa_report}
             wordCount={output.word_count}
             filename={output.filename}
-            onDownload={handleDownload}
+            onDownload={step === 'done' ? handleDownload : undefined}
             onRegenerate={handleReset}
+            showDownload={step === 'done'}
+            onContinue={step === 'qa' ? runICR : undefined}
+            continueLabel="Continuar → ICR"
           />
-          <ICRReportView report={icrReport!} loading={icrLoading} />
-          </>
+        )}
+
+        {/* ICR step */}
+        {(step === 'icr' || step === 'done') && (
+          <div style={{ marginTop: 20 }}>
+            {icrLoading && (
+              <ICRReportView report={null as any} loading={true} />
+            )}
+            {icrReport && (
+              <>
+                <ICRReportView report={icrReport} loading={false} />
+                {step === 'icr' && (
+                  <div style={{ marginTop: 20, display: 'flex', gap: 12 }}>
+                    <button className="df-btn-primary" onClick={() => setStep('done')} style={{ padding: '12px 32px', fontSize: 15 }}>
+                      Continuar → Descargar
+                    </button>
+                    <button className="df-btn-ghost" onClick={handleReset}>↺ Regenerar</button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Download step */}
+        {step === 'done' && output && (
+          <div style={{ marginTop: 24, display: 'flex', gap: 12 }}>
+            <button className="df-btn-primary" onClick={handleDownload} style={{ padding: '12px 32px', fontSize: 15 }}>
+              ⬇ Descargar .docx
+            </button>
+            <button className="df-btn-ghost" onClick={handleReset}>↺ Nueva acta</button>
+          </div>
         )}
 
         {/* Error */}
