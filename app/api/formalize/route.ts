@@ -25,6 +25,8 @@ REGLAS ESTRICTAS:
 - Para otros montos, usar $X,XXX.XX
 - NO incluir "señaló que" vacío al final
 - El párrafo debe tener sujeto + verbo + objeto claro
+- USA **negrita** para el nombre propio del hablante la PRIMERA vez que aparece en el párrafo. Ej: "La propietaria **María García** manifestó que..."
+- NO uses ningún otro formato markdown
 
 EJEMPLOS:
 Oral: "Pues mira, yo creo que deberíamos revisar el presupuesto porque no me parece que los números cuadren"

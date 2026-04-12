@@ -45,19 +45,8 @@ export default function UploadZone({ onDataReady, loading }: UploadZoneProps) {
 
       {/* Logotype */}
       <div style={{ marginBottom: 56, textAlign: 'center' }}>
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
-          <span style={{
-            display: 'inline-block', width: 6, height: 6, borderRadius: '50%',
-            background: 'var(--amatista)', animation: 'prompt-blink 1.1s step-end infinite',
-          }} />
-          <span style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 11, fontWeight: 500, letterSpacing: '0.2em', textTransform: 'uppercase' as const, color: 'var(--amatista-light)' }}>
-            ForumPHs
-          </span>
-        </div>
-        {/* ForumPHs logo image */}
-        <div style={{ marginBottom: 20 }}>
-          <img src="/logo-wt.png" alt="ForumPHs" style={{ height: 42, width: 'auto' }} />
-        </div>
+
+
         <div style={{ lineHeight: 1, marginBottom: 24 }}>
           <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 52, fontWeight: 300, fontStyle: 'italic', color: 'var(--parch)', lineHeight: 1 }}>
             Document

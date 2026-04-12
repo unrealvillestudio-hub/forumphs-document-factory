@@ -41,6 +41,9 @@ CATEGORÍAS:
 - DATA_MISMATCH: Cifras, fechas, nombres que contradicen los datos verificados del XLSX
 - NARRATIVE_QUALITY: Primera persona residual, lenguaje oral, fragmentos incompletos
 - STRUCTURAL: Secciones faltantes, orden incorrecto, firmas incompletas
+- NARRATIVE_QUALITY también incluye: errores ortográficos, tildes faltantes, concordancia de género/número
+
+ORTOGRAFÍA: Revisa errores ortográficos evidentes (palabras mal escritas, tildes faltantes en palabras clave legales). Panameñismos y nombres propios NO son errores.
 
 SEVERIDADES:
 - CRITICAL: Invalida el acta legalmente (votos incorrectos, quórum falso)

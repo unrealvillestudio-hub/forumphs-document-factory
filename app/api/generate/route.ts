@@ -49,7 +49,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
 
     const {
       Document, Paragraph, TextRun, Table, TableRow, TableCell,
-      AlignmentType, WidthType, Packer, UnderlineType, Footer,
+      AlignmentType, WidthType, BorderStyle, Packer, UnderlineType, Footer,
     } = await import('docx')
 
     const { assignBlocksToSections } = await import('@/lib/processors/sectionAssigner')
@@ -74,12 +74,24 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     // Detect first call without quorum
     const hasFirstCallNoQuorum = detectFirstCallNoQuorum(parsed.raw_files['transcripcion'] || '')
 
+    // ---- Markdown inline bold parser ----
+    function mdRuns(text: string, size = 22, italic = false) {
+      // Parse **bold** markers into bold TextRuns
+      const parts = text.split(/(\*\*[^*]+\*\*)/)
+      return parts.map(part => {
+        if (part.startsWith('**') && part.endsWith('**')) {
+          return new TextRun({ text: part.slice(2, -2), bold: true, size, font: TNR, italics: italic })
+        }
+        return new TextRun({ text: part, size, font: TNR, italics: italic })
+      }).filter(r => (r as any).options?.text !== '')
+    }
+
     // ---- Helpers ----
     const TNR = 'Times New Roman'
 
     const normal = (text: string, opts: { bold?: boolean; italic?: boolean; indent?: boolean; before?: number } = {}) =>
       new Paragraph({
-        children: [new TextRun({ text, bold: opts.bold, italics: opts.italic, size: 22, font: TNR })],
+        children: opts.bold ? [new TextRun({ text, bold: true, size: 22, font: TNR })] : mdRuns(text, 22, opts.italic),
         alignment: AlignmentType.JUSTIFIED,
         indent: opts.indent ? { left: 720 } : undefined,
         spacing: { before: opts.before ?? 120, after: 120, line: 276 },
@@ -300,12 +312,12 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
           children: [
             new TableCell({
               children: [new Paragraph({ children: [new TextRun({ text: LINE, size: 22, font: TNR })] })],
-              borders: { top: { style: 'none' }, bottom: { style: 'none' }, left: { style: 'none' }, right: { style: 'none' } },
+              borders: { top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, left: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, right: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' } },
             }),
             new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: '' })] })], width: { size: 500, type: WidthType.DXA } }),
             new TableCell({
               children: [new Paragraph({ children: [new TextRun({ text: LINE, size: 22, font: TNR })] })],
-              borders: { top: { style: 'none' }, bottom: { style: 'none' }, left: { style: 'none' }, right: { style: 'none' } },
+              borders: { top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, left: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, right: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' } },
             }),
           ],
         }),
@@ -313,12 +325,12 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
           children: [
             new TableCell({
               children: [new Paragraph({ children: [new TextRun({ text: presName, bold: true, size: 22, font: TNR })] })],
-              borders: { top: { style: 'none' }, bottom: { style: 'none' }, left: { style: 'none' }, right: { style: 'none' } },
+              borders: { top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, left: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, right: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' } },
             }),
             new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: '' })] })], width: { size: 500, type: WidthType.DXA } }),
             new TableCell({
               children: [new Paragraph({ children: [new TextRun({ text: secName, bold: true, size: 22, font: TNR })] })],
-              borders: { top: { style: 'none' }, bottom: { style: 'none' }, left: { style: 'none' }, right: { style: 'none' } },
+              borders: { top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, left: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, right: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' } },
             }),
           ],
         }),
@@ -326,12 +338,12 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
           children: [
             new TableCell({
               children: [new Paragraph({ children: [new TextRun({ text: 'PRESIDENTE/A', bold: true, size: 22, font: TNR })] })],
-              borders: { top: { style: 'none' }, bottom: { style: 'none' }, left: { style: 'none' }, right: { style: 'none' } },
+              borders: { top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, left: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, right: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' } },
             }),
             new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: '' })] })], width: { size: 500, type: WidthType.DXA } }),
             new TableCell({
               children: [new Paragraph({ children: [new TextRun({ text: 'SECRETARIO/A', bold: true, size: 22, font: TNR })] })],
-              borders: { top: { style: 'none' }, bottom: { style: 'none' }, left: { style: 'none' }, right: { style: 'none' } },
+              borders: { top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, left: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, right: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' } },
             }),
           ],
         }),

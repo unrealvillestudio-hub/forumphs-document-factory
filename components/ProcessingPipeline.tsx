@@ -19,7 +19,7 @@ interface BatchLog {
   error?: string
 }
 
-const BATCH_SIZE = 20
+const BATCH_SIZE = 15
 
 export default function ProcessingPipeline({ blocks, skeleton, onComplete }: ProcessingPipelineProps) {
   const [logs, setLogs] = useState<BatchLog[]>([])
@@ -95,7 +95,7 @@ export default function ProcessingPipeline({ blocks, skeleton, onComplete }: Pro
             error: errMsg.substring(0, 80),
           } : l))
           // Push unformalized blocks as fallback so we don't lose them
-          allResults.push(...batch.map(b => ({ ...b, text_formal: b.text_cleaned })))
+          allResults.push(...batch.map(b => ({ ...b, text_formal: b.text_cleaned || b.text_raw || undefined, skip: !(b.text_cleaned || b.text_raw) })))
           setTotalProcessed(allResults.length)
         }
       }
