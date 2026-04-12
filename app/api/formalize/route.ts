@@ -9,7 +9,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { DebateBlock } from '@/lib/types'
 
 export const runtime = 'nodejs'
-export const maxDuration = 300
+export const maxDuration = 60  // Vercel max per request — client batches
 
 const client = new Anthropic({ apiKey: process.env.forumphs_document_factory || process.env.ANTHROPIC_API_KEY })
 
@@ -37,6 +37,9 @@ Respuesta: NULL`
 
 export async function POST(req: NextRequest): Promise<Response> {
   const { blocks, skeleton }: { blocks: DebateBlock[], skeleton?: { agenda_items?: { number: number; title: string }[] } } = await req.json()
+
+    // Process max 50 blocks per request to stay within Vercel 60s limit
+    const BATCH_SIZE = 50
 
     // Apply section assigner before formalization so blocks carry agenda_section
     const { assignBlocksToSections } = await import('@/lib/processors/sectionAssigner')
