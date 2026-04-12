@@ -168,12 +168,12 @@ export default function Home() {
 
       if (needsRetry) {
         autoRetryRef.current += 1
-        // On retry: go back to formalizing step to get better coverage
         setStep('formalizing')
         setTimeout(() => setStep('generating'), 800)
         setTimeout(() => generateDocx(), 800)
         return
       }
+      // Max retries reached or threshold met — proceed to QA
       setStep('qa')
       // ICR is triggered manually by user clicking "Continuar → ICR"
     } catch (err) {
@@ -325,6 +325,7 @@ export default function Home() {
             blocks={blocksToFormalize}
             skeleton={parsed?.skeleton}
             onComplete={handleFormalizationComplete}
+            retryAttempt={autoRetryRef.current}
           />
         )}
 
@@ -356,16 +357,49 @@ export default function Home() {
 
         {/* QA step */}
         {(step === 'qa' || step === 'icr' || step === 'done') && output && (
-          <QAReportView
-            report={output.qa_report}
-            wordCount={output.word_count}
-            filename={output.filename}
-            onDownload={step === 'done' ? handleDownload : undefined}
-            onRegenerate={handleReset}
-            showDownload={step === 'done'}
-            onContinue={step === 'qa' ? runICR : undefined}
-            continueLabel="Continuar → ICR"
-          />
+          <>
+            {/* Retry exhausted warning */}
+            {step === 'qa' && autoRetryRef.current >= MAX_AUTO_RETRIES && (output.qa_report?.formalized_pct ?? 0) < 70 && (
+              <div style={{
+                background: 'rgba(196,98,45,0.08)', border: '1px solid rgba(196,98,45,0.25)',
+                borderRadius: 10, padding: '14px 20px', marginBottom: 16,
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16,
+              }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--terra)', marginBottom: 3 }}>
+                    ⚠ Cobertura insuficiente tras {MAX_AUTO_RETRIES} reintentos
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--parch-dim)' }}>
+                    {output.qa_report?.formalized_pct ?? 0}% bloques formalizados · ~{Math.round((output.word_count || 0) / 500)} páginas estimadas
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
+                  <button
+                    style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid rgba(196,98,45,0.4)', background: 'transparent', color: 'var(--terra)', fontSize: 12, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif' }}
+                    onClick={() => { autoRetryRef.current = 0; generateDocx() }}
+                  >
+                    ↺ Reintentar manualmente
+                  </button>
+                  <button
+                    style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid rgba(200,196,190,0.15)', background: 'transparent', color: 'var(--parch-dim)', fontSize: 12, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif' }}
+                    onClick={handleReset}
+                  >
+                    ⟲ Empezar de nuevo
+                  </button>
+                </div>
+              </div>
+            )}
+            <QAReportView
+              report={output.qa_report}
+              wordCount={output.word_count}
+              filename={output.filename}
+              onDownload={step === 'done' ? handleDownload : undefined}
+              onRegenerate={handleReset}
+              showDownload={step === 'done'}
+              onContinue={step === 'qa' ? runICR : undefined}
+              continueLabel="Continuar → ICR"
+            />
+          </>
         )}
 
         {/* ICR step */}

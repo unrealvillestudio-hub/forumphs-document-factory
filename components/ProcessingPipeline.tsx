@@ -7,6 +7,7 @@ interface ProcessingPipelineProps {
   blocks: DebateBlock[]
   skeleton?: { agenda_items?: { number: number; title: string }[] }
   onComplete: (formalizedBlocks: DebateBlock[]) => void
+  retryAttempt?: number
 }
 
 interface ChunkStatus {
@@ -23,7 +24,7 @@ interface ChunkStatus {
 const EDGE_FN_URL = 'https://amlvyycfepwhiindxgzw.supabase.co/functions/v1/fphs-formalize'
 const CHUNK_SIZE = 15  // blocks per Edge Function call
 
-export default function ProcessingPipeline({ blocks, skeleton, onComplete }: ProcessingPipelineProps) {
+export default function ProcessingPipeline({ blocks, skeleton, onComplete, retryAttempt = 0 }: ProcessingPipelineProps) {
   const [chunks, setChunks] = useState<ChunkStatus[]>([])
   const [done, setDone] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -69,7 +70,7 @@ export default function ProcessingPipeline({ blocks, skeleton, onComplete }: Pro
           const res = await fetch(EDGE_FN_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ blocks: chunkBlocks }),
+            body: JSON.stringify({ blocks: chunkBlocks, retry_attempt: retryAttempt }),
           })
 
           if (!res.ok) {
@@ -137,11 +138,11 @@ export default function ProcessingPipeline({ blocks, skeleton, onComplete }: Pro
           border: `1px solid ${done ? 'rgba(74,222,128,0.3)' : 'rgba(92,52,114,0.3)'}`,
           borderRadius: 8, padding: '6px 14px', marginBottom: 16,
         }}>
-          {!done && <div style={{ width: 8, height: 8, background: 'var(--amatista)', borderRadius: '50%', animation: 'pulse-ring 1.5s infinite' }} />}
+          {!done && <div style={{ width: 8, height: 8, background: retryAttempt > 0 ? 'var(--terra)' : 'var(--amatista)', borderRadius: '50%', animation: 'pulse-ring 1.5s infinite' }} />}
           <span style={{ fontSize: 12, color: done ? '#4ADE80' : 'var(--amatista-light)', fontWeight: 500, letterSpacing: '0.05em' }}>
             {done
               ? `✅ COMPLETO — ${totalChunks} agentes finalizados`
-              : `PASO 0.5 · ${runningCount} AGENTES EN PARALELO · ${doneCount}/${totalChunks} completados`
+              : `PASO 0.5 · ${runningCount} AGENTES · ${doneCount}/${totalChunks}${retryAttempt > 0 ? ` · TOLERANCIA +${retryAttempt * 10}%` : ''}`
             }
           </span>
         </div>
@@ -152,7 +153,9 @@ export default function ProcessingPipeline({ blocks, skeleton, onComplete }: Pro
         <p style={{ color: 'var(--parch-dim)', fontSize: 14, margin: 0 }}>
           {done
             ? `${chunks.reduce((s, c) => s + c.formalized, 0)} bloques formalizados · ${errorCount > 0 ? `${errorCount} agentes con fallback` : 'todos los agentes OK'}`
-            : `${totalChunks} agentes trabajando simultáneamente — sin límite de tiempo por Supabase Edge Functions`
+            : retryAttempt > 0
+              ? `Reintento ${retryAttempt} — tolerancia aumentada, umbral mínimo reducido`
+              : `${totalChunks} agentes trabajando simultáneamente — sin límite de tiempo por Supabase Edge Functions`
           }
         </p>
       </div>
