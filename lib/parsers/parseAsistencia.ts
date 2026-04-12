@@ -46,6 +46,7 @@ export function parseVotaciones(rows: Record<string, string>[]): VotationRecord[
     const total = parseInt(String(row['TOTAL'] || row['HABILITADOS'] || '0'))
 
     if (!topic && isNaN(yes)) continue
+    if (!String(topic).trim()) continue  // skip empty topic rows
 
     const pct = total > 0 ? (yes / total) * 100 : yes + no > 0 ? (yes / (yes + no)) * 100 : 0
 

@@ -61,6 +61,17 @@ export function detectPreflightGaps(parsed: ParsedHypalZip): PreflightGap[] {
     value: parsed.attendance.length,
   })
 
+  // 5b. Date (if not found)
+  if (!s.date_str || s.date_str.includes('PENDIENTE') || s.date_str.includes('NO ENCONTRADA')) {
+    gaps.push({
+      field: 'confirmed_date',
+      label: 'Fecha de la Asamblea',
+      description: 'Fecha en que se celebró la asamblea (ej: lunes, 21 de abril de 2025)',
+      required: true,
+      type: 'text',
+    })
+  }
+
   // 6. Time end (if not found)
   if (!s.time_end || s.time_end.includes('PENDIENTE')) {
     gaps.push({

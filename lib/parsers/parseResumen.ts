@@ -11,10 +11,16 @@ const MONTH_MAP: Record<string, number> = {
 }
 
 function extractDate(text: string): string {
-  // "lunes, 21 de abril de 2025" → "lunes, 21 de abril de 2025"
-  const m = text.match(/(?:lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado|domingo),?\s*(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})/i)
-  if (m) return `${m[0]}`
-  return '[FECHA NO ENCONTRADA]'
+  // Format: "lunes, 21 de abril de 2025"
+  const m1 = text.match(/(?:lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo),?\s*\d{1,2}\s+de\s+\w+\s+de\s+\d{4}/i)
+  if (m1) return m1[0]
+  // Format: "21 de abril de 2025" (no weekday)
+  const m2 = text.match(/\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de\s+\d{4}/i)
+  if (m2) return m2[0]
+  // Format: "abril 21, 2025" or "21/04/2025"
+  const m3 = text.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}/)
+  if (m3) return m3[0]
+  return '[FECHA PENDIENTE — proveer en Pre-flight]'
 }
 
 function extractTime(text: string, type: 'start' | 'end'): string {

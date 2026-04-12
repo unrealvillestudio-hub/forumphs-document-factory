@@ -84,7 +84,7 @@ Fragmento de habla oral:
 Escribe el párrafo formal para el acta, o responde NULL.`
 
           const message = await client.messages.create({
-            model: 'claude-sonnet-4-20250514',
+            model: 'claude-sonnet-4-6',
             max_tokens: 300,
             system: SYSTEM_PROMPT,
             messages: [{ role: 'user', content: userPrompt }],
@@ -118,12 +118,13 @@ Escribe el párrafo formal para el acta, o responde NULL.`
 
         } catch (err) {
           console.error(`Error formalizing block ${i}:`, err)
+          const errMsg = err instanceof Error ? err.message : String(err)
           results.push({ ...block, text_formal: block.text_cleaned, skip: false })
           controller.enqueue(encoder.encode(JSON.stringify({
             type: 'error',
             index: i,
             speaker: block.speaker_name,
-            error: 'API error — usando texto limpiado como fallback',
+            error: `API error: ${errMsg.substring(0, 120)}`,
           }) + '\n'))
         }
 
