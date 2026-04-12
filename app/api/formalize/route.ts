@@ -11,11 +11,7 @@ import type { DebateBlock } from '@/lib/types'
 export const runtime = 'nodejs'
 export const maxDuration = 300
 
-<<<<<<< HEAD
 const client = new Anthropic({ apiKey: process.env.forumphs_document_factory || process.env.ANTHROPIC_API_KEY })
-=======
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
->>>>>>> 8f5493dac9bc99c358cc887ee3fb736596b7b00f
 
 const SYSTEM_PROMPT = `Eres un redactor especializado en Actas de Asamblea de Propiedad Horizontal en Panamá. 
 Tu función es convertir fragmentos de habla oral en párrafos formales de tercera persona para el acta legal.
@@ -156,4 +152,3 @@ Escribe el párrafo formal para el acta, o responde NULL.`
     },
   })
 }
-
