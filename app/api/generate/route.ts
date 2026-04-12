@@ -301,55 +301,36 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     docChildren.push(emptyLine())
     docChildren.push(emptyLine())
 
-    // Signature block — 2 column table
+    // Signature block — 2 columns only
     const presName = s.president_name?.toUpperCase() || '[NOMBRE PRESIDENTE/A]'
     const secName = s.secretary_name?.toUpperCase() || '[NOMBRE SECRETARIO/A]'
-    const LINE = '_'.repeat(48)
+    const LINE = '_'.repeat(46)
+    const NB = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }
+    const NO_BORDERS = { top: NB, bottom: NB, left: NB, right: NB }
+
+    const sigRow = (left: string, right: string, bold = false) => new TableRow({
+      children: [
+        new TableCell({
+          children: [new Paragraph({ children: [new TextRun({ text: left, bold, size: 22, font: TNR })] })],
+          borders: NO_BORDERS,
+          width: { size: 4680, type: WidthType.DXA },
+        }),
+        new TableCell({
+          children: [new Paragraph({ children: [new TextRun({ text: right, bold, size: 22, font: TNR })] })],
+          borders: NO_BORDERS,
+          width: { size: 4680, type: WidthType.DXA },
+        }),
+      ],
+    })
 
     docChildren.push(new Table({
       rows: [
-        new TableRow({
-          children: [
-            new TableCell({
-              children: [new Paragraph({ children: [new TextRun({ text: LINE, size: 22, font: TNR })] })],
-              borders: { top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, left: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, right: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' } },
-            }),
-            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: '' })] })], width: { size: 500, type: WidthType.DXA } }),
-            new TableCell({
-              children: [new Paragraph({ children: [new TextRun({ text: LINE, size: 22, font: TNR })] })],
-              borders: { top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, left: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, right: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' } },
-            }),
-          ],
-        }),
-        new TableRow({
-          children: [
-            new TableCell({
-              children: [new Paragraph({ children: [new TextRun({ text: presName, bold: true, size: 22, font: TNR })] })],
-              borders: { top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, left: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, right: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' } },
-            }),
-            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: '' })] })], width: { size: 500, type: WidthType.DXA } }),
-            new TableCell({
-              children: [new Paragraph({ children: [new TextRun({ text: secName, bold: true, size: 22, font: TNR })] })],
-              borders: { top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, left: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, right: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' } },
-            }),
-          ],
-        }),
-        new TableRow({
-          children: [
-            new TableCell({
-              children: [new Paragraph({ children: [new TextRun({ text: 'PRESIDENTE/A', bold: true, size: 22, font: TNR })] })],
-              borders: { top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, left: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, right: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' } },
-            }),
-            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: '' })] })], width: { size: 500, type: WidthType.DXA } }),
-            new TableCell({
-              children: [new Paragraph({ children: [new TextRun({ text: 'SECRETARIO/A', bold: true, size: 22, font: TNR })] })],
-              borders: { top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, left: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }, right: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' } },
-            }),
-          ],
-        }),
+        sigRow(LINE, LINE),
+        sigRow(presName, secName, true),
+        sigRow('PRESIDENTE/A', 'SECRETARIO/A', true),
       ],
       width: { size: 9360, type: WidthType.DXA },
-      columnWidths: [4300, 500, 4560],
+      columnWidths: [4680, 4680],
     }))
 
     // === BUILD DOC ===

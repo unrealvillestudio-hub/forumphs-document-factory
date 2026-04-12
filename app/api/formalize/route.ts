@@ -50,20 +50,19 @@ export async function POST(req: NextRequest) {
     const agendaItems = skeleton?.agenda_items || []
     const assignedBlocks = assignBlocksToSections(blocks, agendaItems)
 
-    const results: DebateBlock[] = []
+    // Process blocks in parallel chunks of PARALLEL_SIZE
+    const PARALLEL_SIZE = 5
+    const results: DebateBlock[] = new Array(assignedBlocks.length)
 
-    for (let i = 0; i < assignedBlocks.length; i++) {
-      const block = assignedBlocks[i]
-
+    async function formalizeBlock(block: DebateBlock, idx: number): Promise<void> {
       if (block.skip || block.speaker_role === 'logistica' || !block.text_cleaned) {
-        results.push({ ...block, skip: true })
-        continue
+        results[idx] = { ...block, skip: true }
+        return
       }
       if ((block.text_cleaned || '').trim().length < 30) {
-        results.push({ ...block, skip: true, skip_reason: 'too_short' })
-        continue
+        results[idx] = { ...block, skip: true, skip_reason: 'too_short' }
+        return
       }
-
       try {
         const userPrompt = `Hablante: ${block.speaker_name}
 Cargo/rol: ${block.speaker_role}
@@ -80,27 +79,21 @@ Escribe el párrafo formal para el acta, o responde NULL.`
           system: SYSTEM_PROMPT,
           messages: [{ role: 'user', content: userPrompt }],
         })
-
         const responseText = message.content
           .filter((c): c is Anthropic.TextBlock => c.type === 'text')
-          .map(c => c.text)
-          .join('')
-          .trim()
-
+          .map(c => c.text).join('').trim()
         const formalText = responseText === 'NULL' ? null : responseText
-        results.push({
-          ...block,
-          text_formal: formalText || undefined,
-          skip: formalText === null,
-          skip_reason: formalText === null ? 'no_content' : undefined,
-        })
+        results[idx] = { ...block, text_formal: formalText || undefined, skip: formalText === null, skip_reason: formalText === null ? 'no_content' : undefined }
       } catch (err) {
-        // On error, use cleaned text as fallback — don't stop the batch
-        results.push({ ...block, text_formal: block.text_cleaned, skip: false })
-        console.error(`Block ${i} error:`, err)
+        results[idx] = { ...block, text_formal: block.text_cleaned || block.text_raw, skip: false }
+        console.error(`Block ${idx} error:`, err)
       }
+    }
 
-      // No delay — API handles rate limiting
+    // Process in parallel chunks
+    for (let i = 0; i < assignedBlocks.length; i += PARALLEL_SIZE) {
+      const chunk = assignedBlocks.slice(i, i + PARALLEL_SIZE)
+      await Promise.allSettled(chunk.map((block, j) => formalizeBlock(block, i + j)))
     }
 
     return NextResponse.json({
