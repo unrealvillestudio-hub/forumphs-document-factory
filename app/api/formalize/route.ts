@@ -156,3 +156,4 @@ Escribe el párrafo formal para el acta, o responde NULL.`
     },
   })
 }
+

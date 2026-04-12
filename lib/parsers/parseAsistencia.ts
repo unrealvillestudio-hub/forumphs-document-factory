@@ -116,3 +116,4 @@ export function parseVotaciones(rows: Record<string, unknown>[]): VotationRecord
 
   return records
 }
+

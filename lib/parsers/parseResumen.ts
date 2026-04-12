@@ -112,3 +112,4 @@ export function parseResumen(rawText: string): SkeletonData {
     raw_text: rawText,
   }
 }
+
