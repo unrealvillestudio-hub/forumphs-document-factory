@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import UploadZone from '@/components/UploadZone'
 import PreflightForm from '@/components/PreflightForm'
 import ProcessingPipeline from '@/components/ProcessingPipeline'
@@ -47,7 +47,7 @@ export default function Home() {
   const [output, setOutput] = useState<DocOutput | null>(null)
   const [icrReport, setIcrReport] = useState<ICRReport | null>(null)
   const [icrLoading, setIcrLoading] = useState(false)
-  const [autoRetryCount, setAutoRetryCount] = useState(0)
+  const autoRetryRef = useRef(0)
   const MAX_AUTO_RETRIES = 2
   const [error, setError] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
@@ -144,6 +144,7 @@ export default function Home() {
           parsed,
           preflight,
           formalizedBlocks: blocks || formalizedBlocks,
+          retry_attempt: autoRetryRef.current,
         }),
       })
 
@@ -155,7 +156,7 @@ export default function Home() {
       const qaReport = data.qa_report
       const formalizedPct = qaReport?.formalized_pct ?? 0
       const estimatedPages = Math.round((data.word_count || 0) / 500)
-      const needsRetry = (formalizedPct < 70 || estimatedPages < 25) && autoRetryCount < MAX_AUTO_RETRIES
+      const needsRetry = (formalizedPct < 70 || estimatedPages < 25) && autoRetryRef.current < MAX_AUTO_RETRIES
 
       setOutput({
         docx_base64: data.docx_base64,
@@ -166,8 +167,10 @@ export default function Home() {
       })
 
       if (needsRetry) {
-        setAutoRetryCount(prev => prev + 1)
-        // Auto-regenerate: go back to formalizing with same blocks
+        autoRetryRef.current += 1
+        // On retry: go back to formalizing step to get better coverage
+        setStep('formalizing')
+        setTimeout(() => setStep('generating'), 800)
         setTimeout(() => generateDocx(), 800)
         return
       }
@@ -222,7 +225,7 @@ export default function Home() {
     setParsed(null)
     setIcrReport(null)
     setIcrLoading(false)
-    setAutoRetryCount(0)
+    autoRetryRef.current = 0
     setGaps([])
     setPreflight(null)
     setBlocksToFormalize([])
@@ -343,10 +346,10 @@ export default function Home() {
               fontWeight: 400,
               margin: '0 0 8px',
             }}>
-              {autoRetryCount > 0 ? `Mejorando cobertura (intento ${autoRetryCount + 1}/${MAX_AUTO_RETRIES + 1})` : 'Generando el Acta'}
+              {autoRetryRef.current > 0 ? `Mejorando cobertura (intento ${autoRetryRef.current + 1}/${MAX_AUTO_RETRIES + 1})` : 'Generando el Acta'}
             </h2>
             <p style={{ color: 'var(--parch-dim)', fontSize: 14 }}>
-              {autoRetryCount > 0 ? 'QA detectó cobertura insuficiente — regenerando automáticamente' : 'Ensamblando secciones · aplicando formato · construyendo .docx'}
+              {autoRetryRef.current > 0 ? 'QA detectó cobertura insuficiente — regenerando automáticamente' : 'Ensamblando secciones · aplicando formato · construyendo .docx'}
             </p>
           </div>
         )}
