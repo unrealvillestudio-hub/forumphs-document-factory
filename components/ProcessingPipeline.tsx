@@ -9,99 +9,112 @@ interface ProcessingPipelineProps {
   onComplete: (formalizedBlocks: DebateBlock[]) => void
 }
 
-interface BatchLog {
-  batchNum: number
+interface ChunkStatus {
+  id: number
   from: number
   to: number
+  status: 'pending' | 'running' | 'done' | 'error'
   formalized: number
   skipped: number
-  status: 'pending' | 'running' | 'done' | 'error'
   error?: string
 }
 
-const BATCH_SIZE = 15
+// Supabase Edge Function URL
+const EDGE_FN_URL = 'https://amlvyycfepwhiindxgzw.supabase.co/functions/v1/fphs-formalize'
+const CHUNK_SIZE = 15  // blocks per Edge Function call
 
 export default function ProcessingPipeline({ blocks, skeleton, onComplete }: ProcessingPipelineProps) {
-  const [logs, setLogs] = useState<BatchLog[]>([])
+  const [chunks, setChunks] = useState<ChunkStatus[]>([])
   const [done, setDone] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [currentBatch, setCurrentBatch] = useState(0)
   const [totalProcessed, setTotalProcessed] = useState(0)
   const startedRef = useRef(false)
   const logRef = useRef<HTMLDivElement>(null)
 
   const totalBlocks = blocks.length
-  const totalBatches = Math.ceil(totalBlocks / BATCH_SIZE)
+  const totalChunks = Math.ceil(totalBlocks / CHUNK_SIZE)
   const pct = done ? 100 : totalBlocks > 0 ? Math.round((totalProcessed / totalBlocks) * 100) : 0
 
   useEffect(() => {
     if (startedRef.current) return
     startedRef.current = true
 
-    // Initialize batch log
-    const initialLogs: BatchLog[] = Array.from({ length: totalBatches }, (_, i) => ({
-      batchNum: i + 1,
-      from: i * BATCH_SIZE + 1,
-      to: Math.min((i + 1) * BATCH_SIZE, totalBlocks),
+    const initialChunks: ChunkStatus[] = Array.from({ length: totalChunks }, (_, i) => ({
+      id: i,
+      from: i * CHUNK_SIZE + 1,
+      to: Math.min((i + 1) * CHUNK_SIZE, totalBlocks),
+      status: 'pending',
       formalized: 0,
       skipped: 0,
-      status: 'pending',
     }))
-    setLogs(initialLogs)
+    setChunks(initialChunks)
 
     async function run() {
-      const allResults: DebateBlock[] = []
+      const allResults: DebateBlock[] = new Array(totalBlocks)
 
-      for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
-        const batchStart = batchIdx * BATCH_SIZE
-        const batch = blocks.slice(batchStart, batchStart + BATCH_SIZE)
+      // Pre-assign agenda sections before fanning out
+      const { assignBlocksToSections } = await import('@/lib/processors/sectionAssigner')
+      const agendaItems = skeleton?.agenda_items || []
+      const assignedBlocks = assignBlocksToSections(blocks, agendaItems)
 
-        setCurrentBatch(batchIdx + 1)
-        setLogs(prev => prev.map((l, i) => i === batchIdx ? { ...l, status: 'running' } : l))
+      // Mark all chunks as running simultaneously
+      setChunks(prev => prev.map(c => ({ ...c, status: 'running' })))
+
+      // Fan-out: fire ALL chunks simultaneously
+      const chunkPromises = Array.from({ length: totalChunks }, async (_, i) => {
+        const start = i * CHUNK_SIZE
+        const chunkBlocks = assignedBlocks.slice(start, start + CHUNK_SIZE)
 
         try {
-          const res = await fetch('/api/formalize', {
+          const res = await fetch(EDGE_FN_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ blocks: batch, skeleton }),
+            body: JSON.stringify({ blocks: chunkBlocks }),
           })
 
           if (!res.ok) {
             const errText = await res.text()
-            throw new Error(`HTTP ${res.status}: ${errText.substring(0, 100)}`)
+            throw new Error(`HTTP ${res.status}: ${errText.substring(0, 80)}`)
           }
 
           const data = await res.json()
+          if (!data.success || !data.blocks) throw new Error(data.error || 'Invalid response')
 
-          if (!data.success || !data.blocks) {
-            throw new Error(data.error || 'Respuesta inválida del servidor')
-          }
+          // Store results in correct positions
+          data.blocks.forEach((block: DebateBlock, j: number) => {
+            allResults[start + j] = block
+          })
 
-          allResults.push(...data.blocks)
-          setTotalProcessed(allResults.length)
-
-          setLogs(prev => prev.map((l, i) => i === batchIdx ? {
-            ...l,
-            status: 'done',
+          setChunks(prev => prev.map(c => c.id === i ? {
+            ...c, status: 'done',
             formalized: data.total_formalized,
             skipped: data.total_skipped,
-          } : l))
+          } : c))
+
+          setTotalProcessed(prev => prev + chunkBlocks.length)
+
+          return data.blocks.length
 
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err)
-          setLogs(prev => prev.map((l, i) => i === batchIdx ? {
-            ...l,
-            status: 'error',
-            error: errMsg.substring(0, 80),
-          } : l))
-          // Push unformalized blocks as fallback so we don't lose them
-          allResults.push(...batch.map(b => ({ ...b, text_formal: b.text_cleaned || b.text_raw || undefined, skip: !(b.text_cleaned || b.text_raw) })))
-          setTotalProcessed(allResults.length)
+          // Fallback: use text_cleaned/text_raw
+          chunkBlocks.forEach((block, j) => {
+            allResults[start + j] = { ...block, text_formal: block.text_cleaned || block.text_raw, skip: !(block.text_cleaned || block.text_raw) }
+          })
+
+          setChunks(prev => prev.map(c => c.id === i ? {
+            ...c, status: 'error', error: errMsg.substring(0, 60),
+          } : c))
+
+          setTotalProcessed(prev => prev + chunkBlocks.length)
+          return 0
         }
-      }
+      })
+
+      await Promise.allSettled(chunkPromises)
 
       setDone(true)
-      onComplete(allResults)
+      onComplete(allResults.filter(Boolean))
     }
 
     run().catch(err => setError(err instanceof Error ? err.message : String(err)))
@@ -109,7 +122,11 @@ export default function ProcessingPipeline({ blocks, skeleton, onComplete }: Pro
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
-  }, [logs])
+  }, [chunks])
+
+  const doneCount = chunks.filter(c => c.status === 'done').length
+  const errorCount = chunks.filter(c => c.status === 'error').length
+  const runningCount = chunks.filter(c => c.status === 'running').length
 
   return (
     <div className="fade-in">
@@ -122,64 +139,89 @@ export default function ProcessingPipeline({ blocks, skeleton, onComplete }: Pro
         }}>
           {!done && <div style={{ width: 8, height: 8, background: 'var(--amatista)', borderRadius: '50%', animation: 'pulse-ring 1.5s infinite' }} />}
           <span style={{ fontSize: 12, color: done ? '#4ADE80' : 'var(--amatista-light)', fontWeight: 500, letterSpacing: '0.05em' }}>
-            {done ? '✅ FORMALIZACIÓN COMPLETA' : `PASO 0.5 · BATCH ${currentBatch}/${totalBatches}`}
+            {done
+              ? `✅ COMPLETO — ${totalChunks} agentes finalizados`
+              : `PASO 0.5 · ${runningCount} AGENTES EN PARALELO · ${doneCount}/${totalChunks} completados`
+            }
           </span>
         </div>
 
         <h2 style={{ fontFamily: 'EB Garamond, serif', fontSize: 32, fontWeight: 400, color: 'var(--parch)', margin: '0 0 8px' }}>
-          {done ? 'Bloques formalizados' : 'Formalizando intervenciones'}
+          {done ? 'Formalización completa' : 'Formalizando en paralelo'}
         </h2>
         <p style={{ color: 'var(--parch-dim)', fontSize: 14, margin: 0 }}>
           {done
-            ? `${logs.reduce((s,l) => s + l.formalized, 0)} formalizados · ${logs.reduce((s,l) => s + l.skipped, 0)} omitidos`
-            : `Cada batch de ${BATCH_SIZE} bloques se procesa en una llamada separada — sin timeouts.`}
+            ? `${chunks.reduce((s, c) => s + c.formalized, 0)} bloques formalizados · ${errorCount > 0 ? `${errorCount} agentes con fallback` : 'todos los agentes OK'}`
+            : `${totalChunks} agentes trabajando simultáneamente — sin límite de tiempo por Supabase Edge Functions`
+          }
         </p>
       </div>
 
-      {/* Progress bar */}
+      {/* Progress */}
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 13 }}>
           <span style={{ color: 'var(--parch-dim)' }}>{totalProcessed} / {totalBlocks} bloques</span>
           <span style={{ color: done ? '#4ADE80' : 'var(--amatista-light)', fontWeight: 600 }}>{pct}%</span>
         </div>
         <div className="wc-bar">
-          <div className={`wc-bar-fill ${done ? 'ok' : ''}`} style={{ width: `${pct}%`, transition: 'width 0.5s ease' }} />
+          <div className={`wc-bar-fill ${done ? 'ok' : ''}`} style={{ width: `${pct}%`, transition: 'width 0.3s ease' }} />
         </div>
       </div>
 
-      {/* Batch log */}
+      {/* Agent grid */}
       <div ref={logRef} style={{
-        background: 'rgba(14,17,26,0.8)', border: '1px solid rgba(92,52,114,0.2)',
-        borderRadius: 10, padding: 16, maxHeight: 320, overflowY: 'auto',
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+        gap: 8,
+        maxHeight: 320,
+        overflowY: 'auto',
+        background: 'rgba(14,17,26,0.8)',
+        border: '1px solid rgba(92,52,114,0.2)',
+        borderRadius: 10,
+        padding: 16,
       }}>
-        {logs.map((log, i) => (
-          <div key={i} style={{
-            padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.04)',
-            display: 'flex', alignItems: 'center', gap: 14,
+        {chunks.map(chunk => (
+          <div key={chunk.id} style={{
+            padding: '10px 12px',
+            borderRadius: 8,
+            background: chunk.status === 'done'
+              ? 'rgba(74,222,128,0.08)'
+              : chunk.status === 'error'
+              ? 'rgba(196,98,45,0.08)'
+              : chunk.status === 'running'
+              ? 'rgba(92,52,114,0.12)'
+              : 'rgba(255,255,255,0.03)',
+            border: `1px solid ${chunk.status === 'done' ? 'rgba(74,222,128,0.2)' : chunk.status === 'error' ? 'rgba(196,98,45,0.2)' : chunk.status === 'running' ? 'rgba(92,52,114,0.3)' : 'rgba(255,255,255,0.05)'}`,
           }}>
-            <span style={{
-              fontSize: 11, minWidth: 60, fontWeight: 600, letterSpacing: '0.04em',
-              color: log.status === 'done' ? '#4ADE80' : log.status === 'error' ? 'var(--terra)' : log.status === 'running' ? 'var(--amatista-light)' : 'rgba(200,196,190,0.2)',
-            }}>
-              BATCH {log.batchNum}
-            </span>
-            <span style={{ fontSize: 12, color: 'rgba(200,196,190,0.4)', minWidth: 100 }}>
-              bloques {log.from}–{log.to}
-            </span>
-            <span style={{ fontSize: 12, flex: 1, color: log.status === 'done' ? 'var(--parch-dim)' : log.status === 'error' ? 'var(--terra)' : 'rgba(200,196,190,0.2)' }}>
-              {log.status === 'pending' && '— en espera'}
-              {log.status === 'running' && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ display: 'inline-block', width: 10, height: 10, border: '1.5px solid var(--amatista)', borderTop: '1.5px solid transparent', borderRadius: '50%', animation: 'spin-slow 0.8s linear infinite' }} />
-                  procesando…
-                </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              {chunk.status === 'running' && (
+                <div style={{ width: 8, height: 8, border: '1.5px solid var(--amatista)', borderTop: '1.5px solid transparent', borderRadius: '50%', animation: 'spin-slow 0.8s linear infinite', flexShrink: 0 }} />
               )}
-              {log.status === 'done' && `✓ ${log.formalized} formalizados · ${log.skipped} omitidos`}
-              {log.status === 'error' && `⚠ ${log.error}`}
-            </span>
+              {chunk.status === 'done' && <span style={{ color: '#4ADE80', fontSize: 10 }}>✓</span>}
+              {chunk.status === 'error' && <span style={{ color: 'var(--terra)', fontSize: 10 }}>⚠</span>}
+              {chunk.status === 'pending' && <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'rgba(200,196,190,0.15)', flexShrink: 0 }} />}
+              <span style={{
+                fontSize: 11, fontWeight: 700, letterSpacing: '0.04em',
+                color: chunk.status === 'done' ? '#4ADE80' : chunk.status === 'error' ? 'var(--terra)' : chunk.status === 'running' ? 'var(--amatista-light)' : 'rgba(200,196,190,0.2)',
+              }}>
+                Agente {chunk.id + 1}
+              </span>
+            </div>
+            <div style={{ fontSize: 10, color: 'rgba(200,196,190,0.35)' }}>
+              bloques {chunk.from}–{chunk.to}
+            </div>
+            {chunk.status === 'done' && (
+              <div style={{ fontSize: 10, color: '#4ADE80', marginTop: 3 }}>
+                {chunk.formalized} ok · {chunk.skipped} skip
+              </div>
+            )}
+            {chunk.status === 'error' && (
+              <div style={{ fontSize: 9, color: 'var(--terra)', marginTop: 3, wordBreak: 'break-word' as const }}>
+                {chunk.error}
+              </div>
+            )}
           </div>
         ))}
-        {logs.length === 0 && <span style={{ color: 'var(--parch-dim)', opacity: 0.4, fontSize: 13 }}>Iniciando…</span>}
       </div>
 
       {error && (
