@@ -154,3 +154,17 @@ body {
 }
 .wc-bar-fill.over { background: var(--terra); }
 .wc-bar-fill.ok { background: #4ADE80; }
+
+/* ── ForumPHs Wordmark — BP_BRAND exact rules ── */
+.fphs-wm { display: inline-flex; align-items: baseline; gap: 0; line-height: 1; }
+.fphs-wm .f  { font-family: 'EB Garamond', serif; font-weight: 400; letter-spacing: 0.01em; color: #fff; }
+.fphs-wm .ph { font-family: 'DM Sans', sans-serif; font-weight: 700; letter-spacing: 0.06em; color: #C4622D; }
+.fphs-wm .s  { font-family: 'DM Sans', sans-serif; font-weight: 700; letter-spacing: 0.04em; color: #C4622D; }
+/* Sizes */
+.fphs-wm.lg .f, .fphs-wm.lg .ph, .fphs-wm.lg .s { font-size: 32px; }
+.fphs-wm.md .f, .fphs-wm.md .ph, .fphs-wm.md .s { font-size: 22px; }
+.fphs-wm.sm .f, .fphs-wm.sm .ph, .fphs-wm.sm .s { font-size: 15px; }
+.fphs-wm.xs .f, .fphs-wm.xs .ph, .fphs-wm.xs .s { font-size: 12px; }
+/* On light bg (tint variant) */
+.fphs-wm.tint .f { color: #3A1F4A; }
+.fphs-wm.tint .ph, .fphs-wm.tint .s { color: #C4622D; }

@@ -2,15 +2,15 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Document Factory — ForumPHs',
-  description: 'Generación de Actas de Asamblea PH',
+  title: 'Document Factory · ForumPHs',
+  description: 'Generación de Actas de Asamblea PH · ForumPHs Panamá',
+  icons: {
+    icon: '/favicon.ico',
+    apple: '/favicon.png',
+  },
 }
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="es">
       <body>{children}</body>

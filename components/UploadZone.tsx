@@ -54,11 +54,15 @@ export default function UploadZone({ onDataReady, loading }: UploadZoneProps) {
             ForumPHs
           </span>
         </div>
+        {/* ForumPHs logo image */}
+        <div style={{ marginBottom: 20 }}>
+          <img src="/logo-wt.png" alt="ForumPHs" style={{ height: 42, width: 'auto' }} />
+        </div>
         <div style={{ lineHeight: 1, marginBottom: 24 }}>
-          <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 56, fontWeight: 300, fontStyle: 'italic', color: 'var(--parch)', lineHeight: 1 }}>
+          <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 52, fontWeight: 300, fontStyle: 'italic', color: 'var(--parch)', lineHeight: 1 }}>
             Document
           </div>
-          <div style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 44, fontWeight: 700, letterSpacing: '0.22em', textTransform: 'uppercase' as const, color: 'var(--amatista-light)', lineHeight: 1, marginTop: -4 }}>
+          <div style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 42, fontWeight: 700, letterSpacing: '0.22em', textTransform: 'uppercase' as const, color: 'var(--terra)', lineHeight: 1, marginTop: -4 }}>
             FACTORY
           </div>
         </div>

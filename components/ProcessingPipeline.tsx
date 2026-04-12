@@ -39,50 +39,66 @@ export default function ProcessingPipeline({ blocks, skeleton, onComplete }: Pro
 
     async function run() {
       try {
-        const res = await fetch('/api/formalize', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ blocks, skeleton }),
-        })
+        const BATCH_SIZE = 50
+        const allResults: DebateBlock[] = []
+        const totalBlocks = blocks.length
 
-        if (!res.ok || !res.body) {
-          setError('Error al conectar con el API de formalización')
-          return
-        }
+        for (let batchStart = 0; batchStart < totalBlocks; batchStart += BATCH_SIZE) {
+          const batch = blocks.slice(batchStart, batchStart + BATCH_SIZE)
 
-        const reader = res.body.getReader()
-        const decoder = new TextDecoder()
-        let buffer = ''
+          const res = await fetch('/api/formalize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ blocks: batch, skeleton }),
+          })
 
-        while (true) {
-          const { done: streamDone, value } = await reader.read()
-          if (streamDone) break
+          if (!res.ok || !res.body) {
+            setError('Error al conectar con el API de formalización')
+            return
+          }
 
-          buffer += decoder.decode(value, { stream: true })
-          const lines = buffer.split('\n')
-          buffer = lines.pop() || ''
+          const reader = res.body.getReader()
+          const decoder = new TextDecoder()
+          let buffer = ''
 
-          for (const line of lines) {
-            if (!line.trim()) continue
-            try {
-              const event: ProgressEvent = JSON.parse(line)
-              if (event.type === 'progress') {
-                setCurrent({
-                  index: event.index! + 1,
-                  total: event.total!,
-                  speaker: event.speaker || '…',
-                })
-                setEvents(prev => [...prev.slice(-50), event])
-              } else if (event.type === 'complete') {
-                setDone(true)
-                setEvents(prev => [...prev, event])
-                if (event.blocks) onComplete(event.blocks)
-              } else if (event.type === 'error') {
-                setEvents(prev => [...prev, event])
-              }
-            } catch { /* skip malformed line */ }
+          while (true) {
+            const { done: streamDone, value } = await reader.read()
+            if (streamDone) break
+
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split('\n')
+            buffer = lines.pop() || ''
+
+            for (const line of lines) {
+              if (!line.trim()) continue
+              try {
+                const event: ProgressEvent = JSON.parse(line)
+                if (event.type === 'progress') {
+                  const globalIndex = batchStart + (event.index || 0)
+                  setCurrent({
+                    index: globalIndex + 1,
+                    total: totalBlocks,
+                    speaker: event.speaker || '…',
+                  })
+                  setEvents(prev => [...prev.slice(-50), { ...event, index: globalIndex, total: totalBlocks }])
+                } else if (event.type === 'complete') {
+                  if (event.blocks) allResults.push(...event.blocks)
+                } else if (event.type === 'error') {
+                  setEvents(prev => [...prev, event])
+                }
+              } catch { /* skip malformed line */ }
+            }
           }
         }
+
+        // All batches complete
+        setDone(true)
+        setEvents(prev => [...prev, {
+          type: 'complete',
+          total_formalized: allResults.filter(b => b.text_formal).length,
+          total_skipped: allResults.filter(b => b.skip).length,
+        }])
+        onComplete(allResults)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Error desconocido')
       }

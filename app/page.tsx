@@ -205,30 +205,10 @@ export default function Home() {
         alignItems: 'center',
         justifyContent: 'space-between',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{
-            fontFamily: 'Cormorant Garamond, serif',
-            fontSize: 15,
-            fontStyle: 'italic',
-            color: 'var(--parch)',
-          }}>Forum</span>
-          <span style={{
-            fontFamily: 'DM Sans, sans-serif',
-            fontSize: 12,
-            fontWeight: 700,
-            letterSpacing: '0.12em',
-            color: 'var(--amatista-light)',
-            textTransform: 'uppercase',
-          }}>PHs</span>
-          <span style={{ color: 'rgba(200,196,190,0.25)', margin: '0 6px' }}>·</span>
-          <span style={{
-            fontFamily: 'DM Sans, sans-serif',
-            fontSize: 11,
-            fontWeight: 500,
-            letterSpacing: '0.12em',
-            textTransform: 'uppercase',
-            color: 'var(--parch-dim)',
-          }}>Document Factory</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className="fphs-wm sm"><span className="f">Forum</span><span className="ph">PH</span><span className="s">s</span></span>
+          <span style={{ color: 'rgba(200,196,190,0.2)', margin: '0 4px' }}>·</span>
+          <span style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 11, fontWeight: 500, letterSpacing: '0.1em', textTransform: 'uppercase' as const, color: 'rgba(200,196,190,0.4)' }}>Document Factory</span>
         </div>
 
         {/* Step indicator */}
@@ -375,26 +355,10 @@ export default function Home() {
         color: 'var(--parch-dim)',
         backdropFilter: 'blur(12px)',
       }}>
-        {/* Col 1 — ForumPHs wordmark + descriptor */}
+        {/* Col 1 — ForumPHs wordmark BP_BRAND */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{
-            fontFamily: 'Cormorant Garamond, serif',
-            fontSize: 13,
-            fontStyle: 'italic',
-            color: 'var(--parch)',
-            letterSpacing: '0.02em',
-          }}>
-            Forum
-          </span>
-          <span style={{
-            fontFamily: 'DM Sans, sans-serif',
-            fontSize: 11,
-            fontWeight: 700,
-            letterSpacing: '0.12em',
-            color: 'var(--amatista-light)',
-            textTransform: 'uppercase',
-          }}>
-            PHs
+          <span className="fphs-wm xs">
+            <span className="f">Forum</span><span className="ph">PH</span><span className="s">s</span>
           </span>
           <span style={{ color: 'rgba(200,196,190,0.2)', margin: '0 4px' }}>·</span>
           <span style={{ color: 'var(--parch-dim)', letterSpacing: '0.04em' }}>Document Factory v1.4</span>
