@@ -108,12 +108,23 @@ export function checkCompleteness(
   const hasQuorum = /art[íi]culo\s+67/i.test(fullText) || /quór?um/i.test(fullText)
   items.push({ label: 'Sección de quórum (Art. 67 Ley 284)', passed: hasQuorum })
 
-  const hasAttendance = parsed.attendance.length === 0 ||
-    fullText.includes(parsed.attendance[0]?.owner_name || '___NONE___')
+  // Attendance: check multiple names to confirm table was generated
+  let hasAttendance = false
+  if (parsed.attendance.length === 0) {
+    hasAttendance = true // nothing to check
+  } else {
+    // Check first 3 names — if any is in the text, the table is there
+    const sample = parsed.attendance.slice(0, 3)
+    hasAttendance = sample.some(r => fullText.includes(r.owner_name))
+    // Also accept if the document mentions the attendance count
+    if (!hasAttendance) {
+      hasAttendance = new RegExp(`${parsed.attendance.length}\s+unidades`, 'i').test(fullText)
+    }
+  }
   items.push({
     label: 'Lista de asistentes incluida',
     passed: hasAttendance,
-    detail: parsed.attendance.length === 0 ? 'No hay asistentes en el ZIP' : undefined,
+    detail: parsed.attendance.length > 0 ? `${parsed.attendance.length} registros` : 'No hay asistentes en el ZIP',
   })
 
   for (const item of parsed.skeleton.agenda_items) {

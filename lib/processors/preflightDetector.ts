@@ -61,6 +61,18 @@ export function detectPreflightGaps(parsed: ParsedHypalZip): PreflightGap[] {
     value: parsed.attendance.length,
   })
 
+  // 5a. Total units (if not found)
+  if (!s.total_units || s.total_units === 0) {
+    gaps.push({
+      field: 'total_units',
+      label: 'Total de unidades del PH',
+      description: 'Número total de unidades inmobiliarias que conforman el PH (ej: 274)',
+      required: true,
+      type: 'number',
+      value: parsed.attendance.length || 0,
+    })
+  }
+
   // 5b. Date (if not found)
   if (!s.date_str || s.date_str.includes('PENDIENTE') || s.date_str.includes('NO ENCONTRADA')) {
     gaps.push({
@@ -99,6 +111,9 @@ export function applyPreflightAnswers(
   }
   if (answers.confirmed_time_end) {
     updated.skeleton.time_end = String(answers.confirmed_time_end)
+  }
+  if (answers.total_units) {
+    updated.skeleton.total_units = Number(answers.total_units)
   }
 
   return updated

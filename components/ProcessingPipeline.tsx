@@ -9,259 +9,181 @@ interface ProcessingPipelineProps {
   onComplete: (formalizedBlocks: DebateBlock[]) => void
 }
 
-interface ProgressEvent {
-  type: 'progress' | 'error' | 'complete'
-  index?: number
-  total?: number
-  speaker?: string
-  unit?: string
-  result?: string
-  skipped?: boolean
-  blocks?: DebateBlock[]
-  total_formalized?: number
-  total_skipped?: number
+interface BatchLog {
+  batchNum: number
+  from: number
+  to: number
+  formalized: number
+  skipped: number
+  status: 'pending' | 'running' | 'done' | 'error'
   error?: string
 }
 
+const BATCH_SIZE = 40
+
 export default function ProcessingPipeline({ blocks, skeleton, onComplete }: ProcessingPipelineProps) {
-  const [events, setEvents] = useState<ProgressEvent[]>([])
+  const [logs, setLogs] = useState<BatchLog[]>([])
   const [done, setDone] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [current, setCurrent] = useState<{ index: number; total: number; speaker: string } | null>(null)
-  const logRef = useRef<HTMLDivElement>(null)
+  const [currentBatch, setCurrentBatch] = useState(0)
+  const [totalProcessed, setTotalProcessed] = useState(0)
   const startedRef = useRef(false)
+  const logRef = useRef<HTMLDivElement>(null)
 
-  const totalBlocks = blocks.filter(b => !b.skip && b.text_cleaned).length
+  const totalBlocks = blocks.length
+  const totalBatches = Math.ceil(totalBlocks / BATCH_SIZE)
+  const pct = done ? 100 : totalBlocks > 0 ? Math.round((totalProcessed / totalBlocks) * 100) : 0
 
   useEffect(() => {
     if (startedRef.current) return
     startedRef.current = true
 
+    // Initialize batch log
+    const initialLogs: BatchLog[] = Array.from({ length: totalBatches }, (_, i) => ({
+      batchNum: i + 1,
+      from: i * BATCH_SIZE + 1,
+      to: Math.min((i + 1) * BATCH_SIZE, totalBlocks),
+      formalized: 0,
+      skipped: 0,
+      status: 'pending',
+    }))
+    setLogs(initialLogs)
+
     async function run() {
-      try {
-        const BATCH_SIZE = 50
-        const allResults: DebateBlock[] = []
-        const totalBlocks = blocks.length
+      const allResults: DebateBlock[] = []
 
-        for (let batchStart = 0; batchStart < totalBlocks; batchStart += BATCH_SIZE) {
-          const batch = blocks.slice(batchStart, batchStart + BATCH_SIZE)
+      for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+        const batchStart = batchIdx * BATCH_SIZE
+        const batch = blocks.slice(batchStart, batchStart + BATCH_SIZE)
 
+        setCurrentBatch(batchIdx + 1)
+        setLogs(prev => prev.map((l, i) => i === batchIdx ? { ...l, status: 'running' } : l))
+
+        try {
           const res = await fetch('/api/formalize', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ blocks: batch, skeleton }),
           })
 
-          if (!res.ok || !res.body) {
-            setError('Error al conectar con el API de formalización')
-            return
+          if (!res.ok) {
+            const errText = await res.text()
+            throw new Error(`HTTP ${res.status}: ${errText.substring(0, 100)}`)
           }
 
-          const reader = res.body.getReader()
-          const decoder = new TextDecoder()
-          let buffer = ''
+          const data = await res.json()
 
-          while (true) {
-            const { done: streamDone, value } = await reader.read()
-            if (streamDone) break
-
-            buffer += decoder.decode(value, { stream: true })
-            const lines = buffer.split('\n')
-            buffer = lines.pop() || ''
-
-            for (const line of lines) {
-              if (!line.trim()) continue
-              try {
-                const event: ProgressEvent = JSON.parse(line)
-                if (event.type === 'progress') {
-                  const globalIndex = batchStart + (event.index || 0)
-                  setCurrent({
-                    index: globalIndex + 1,
-                    total: totalBlocks,
-                    speaker: event.speaker || '…',
-                  })
-                  setEvents(prev => [...prev.slice(-50), { ...event, index: globalIndex, total: totalBlocks }])
-                } else if (event.type === 'complete') {
-                  if (event.blocks) allResults.push(...event.blocks)
-                } else if (event.type === 'error') {
-                  setEvents(prev => [...prev, event])
-                }
-              } catch { /* skip malformed line */ }
-            }
+          if (!data.success || !data.blocks) {
+            throw new Error(data.error || 'Respuesta inválida del servidor')
           }
+
+          allResults.push(...data.blocks)
+          setTotalProcessed(allResults.length)
+
+          setLogs(prev => prev.map((l, i) => i === batchIdx ? {
+            ...l,
+            status: 'done',
+            formalized: data.total_formalized,
+            skipped: data.total_skipped,
+          } : l))
+
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err)
+          setLogs(prev => prev.map((l, i) => i === batchIdx ? {
+            ...l,
+            status: 'error',
+            error: errMsg.substring(0, 80),
+          } : l))
+          // Push unformalized blocks as fallback so we don't lose them
+          allResults.push(...batch.map(b => ({ ...b, text_formal: b.text_cleaned })))
+          setTotalProcessed(allResults.length)
         }
-
-        // All batches complete
-        setDone(true)
-        setEvents(prev => [...prev, {
-          type: 'complete',
-          total_formalized: allResults.filter(b => b.text_formal).length,
-          total_skipped: allResults.filter(b => b.skip).length,
-        }])
-        onComplete(allResults)
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Error desconocido')
       }
+
+      setDone(true)
+      onComplete(allResults)
     }
 
-    run()
+    run().catch(err => setError(err instanceof Error ? err.message : String(err)))
   }, []) // eslint-disable-line
 
   useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight
-    }
-  }, [events])
-
-  const pct = current ? Math.round((current.index / current.total) * 100) : 0
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
+  }, [logs])
 
   return (
     <div className="fade-in">
       <div style={{ marginBottom: 28 }}>
         <div style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 8,
-          background: 'rgba(92,52,114,0.15)',
-          border: '1px solid rgba(92,52,114,0.3)',
-          borderRadius: 8,
-          padding: '6px 14px',
-          marginBottom: 16,
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          background: done ? 'rgba(74,222,128,0.1)' : 'rgba(92,52,114,0.15)',
+          border: `1px solid ${done ? 'rgba(74,222,128,0.3)' : 'rgba(92,52,114,0.3)'}`,
+          borderRadius: 8, padding: '6px 14px', marginBottom: 16,
         }}>
-          {!done && (
-            <div style={{
-              width: 8, height: 8,
-              background: 'var(--amatista)',
-              borderRadius: '50%',
-              animation: 'pulse-amatista 1.5s infinite',
-            }} />
-          )}
-          <span style={{ fontSize: 12, color: 'var(--amatista-light)', fontWeight: 500, letterSpacing: '0.05em' }}>
-            {done ? '✅ FORMALIZACIÓN COMPLETA' : 'PASO 0.5 · CLAUDE API · ACTIVO'}
+          {!done && <div style={{ width: 8, height: 8, background: 'var(--amatista)', borderRadius: '50%', animation: 'pulse-ring 1.5s infinite' }} />}
+          <span style={{ fontSize: 12, color: done ? '#4ADE80' : 'var(--amatista-light)', fontWeight: 500, letterSpacing: '0.05em' }}>
+            {done ? '✅ FORMALIZACIÓN COMPLETA' : `PASO 0.5 · BATCH ${currentBatch}/${totalBatches}`}
           </span>
         </div>
 
-        <h2 style={{
-          fontFamily: 'EB Garamond, serif',
-          fontSize: 32,
-          fontWeight: 400,
-          color: 'var(--parch)',
-          margin: '0 0 8px',
-        }}>
+        <h2 style={{ fontFamily: 'EB Garamond, serif', fontSize: 32, fontWeight: 400, color: 'var(--parch)', margin: '0 0 8px' }}>
           {done ? 'Bloques formalizados' : 'Formalizando intervenciones'}
         </h2>
         <p style={{ color: 'var(--parch-dim)', fontSize: 14, margin: 0 }}>
           {done
-            ? 'Todos los bloques procesados. Generando el acta final…'
-            : 'Cada intervención pasa por Claude API para convertirla en narrativa legal formal en 3ª persona.'
-          }
+            ? `${logs.reduce((s,l) => s + l.formalized, 0)} formalizados · ${logs.reduce((s,l) => s + l.skipped, 0)} omitidos`
+            : `Cada batch de ${BATCH_SIZE} bloques se procesa en una llamada separada — sin timeouts.`}
         </p>
       </div>
 
       {/* Progress bar */}
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 13 }}>
-          <span style={{ color: 'var(--parch-dim)' }}>
-            {current ? `${current.index} / ${current.total} bloques` : `0 / ${totalBlocks} bloques`}
-          </span>
-          <span style={{ color: done ? '#4ADE80' : 'var(--amatista-light)', fontWeight: 600 }}>
-            {done ? '100%' : `${pct}%`}
-          </span>
+          <span style={{ color: 'var(--parch-dim)' }}>{totalProcessed} / {totalBlocks} bloques</span>
+          <span style={{ color: done ? '#4ADE80' : 'var(--amatista-light)', fontWeight: 600 }}>{pct}%</span>
         </div>
         <div className="wc-bar">
-          <div
-            className={`wc-bar-fill ${done ? 'ok' : ''}`}
-            style={{ width: done ? '100%' : `${pct}%` }}
-          />
+          <div className={`wc-bar-fill ${done ? 'ok' : ''}`} style={{ width: `${pct}%`, transition: 'width 0.5s ease' }} />
         </div>
       </div>
 
-      {/* Current speaker */}
-      {current && !done && (
-        <div style={{
-          background: 'rgba(92,52,114,0.08)',
-          border: '1px solid rgba(92,52,114,0.2)',
-          borderRadius: 10,
-          padding: '14px 18px',
-          marginBottom: 20,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-        }}>
-          <div style={{
-            width: 32, height: 32,
-            border: '2px solid var(--amatista)',
-            borderTop: '2px solid transparent',
-            borderRadius: '50%',
-            animation: 'spin-slow 0.8s linear infinite',
-            flexShrink: 0,
-          }} />
-          <div>
-            <div style={{ fontSize: 12, color: 'var(--parch-dim)', marginBottom: 2 }}>Procesando ahora</div>
-            <div style={{ fontSize: 14, color: 'var(--parch)', fontWeight: 500 }}>{current.speaker}</div>
-          </div>
-        </div>
-      )}
-
-      {/* Live log */}
-      <div
-        ref={logRef}
-        style={{
-          background: 'rgba(14, 17, 26, 0.8)',
-          border: '1px solid rgba(92,52,114,0.2)',
-          borderRadius: 10,
-          padding: '16px',
-          height: 300,
-          overflowY: 'auto',
-          fontFamily: 'DM Sans, monospace',
-          fontSize: 12,
-        }}
-      >
-        {events.length === 0 && (
-          <span style={{ color: 'var(--parch-dim)', opacity: 0.5 }}>Iniciando formalización…</span>
-        )}
-        {events.map((event, i) => (
+      {/* Batch log */}
+      <div ref={logRef} style={{
+        background: 'rgba(14,17,26,0.8)', border: '1px solid rgba(92,52,114,0.2)',
+        borderRadius: 10, padding: 16, maxHeight: 320, overflowY: 'auto',
+      }}>
+        {logs.map((log, i) => (
           <div key={i} style={{
-            padding: '4px 0',
-            borderBottom: '1px solid rgba(255,255,255,0.04)',
-            display: 'flex',
-            gap: 12,
+            padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.04)',
+            display: 'flex', alignItems: 'center', gap: 14,
           }}>
-            {event.type === 'progress' && (
-              <>
-                <span style={{ color: event.skipped ? 'rgba(200,196,190,0.3)' : 'var(--amatista-light)', minWidth: 32, textAlign: 'right' }}>
-                  {event.index !== undefined ? `${event.index! + 1}` : ''}
+            <span style={{
+              fontSize: 11, minWidth: 60, fontWeight: 600, letterSpacing: '0.04em',
+              color: log.status === 'done' ? '#4ADE80' : log.status === 'error' ? 'var(--terra)' : log.status === 'running' ? 'var(--amatista-light)' : 'rgba(200,196,190,0.2)',
+            }}>
+              BATCH {log.batchNum}
+            </span>
+            <span style={{ fontSize: 12, color: 'rgba(200,196,190,0.4)', minWidth: 100 }}>
+              bloques {log.from}–{log.to}
+            </span>
+            <span style={{ fontSize: 12, flex: 1, color: log.status === 'done' ? 'var(--parch-dim)' : log.status === 'error' ? 'var(--terra)' : 'rgba(200,196,190,0.2)' }}>
+              {log.status === 'pending' && '— en espera'}
+              {log.status === 'running' && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ display: 'inline-block', width: 10, height: 10, border: '1.5px solid var(--amatista)', borderTop: '1.5px solid transparent', borderRadius: '50%', animation: 'spin-slow 0.8s linear infinite' }} />
+                  procesando…
                 </span>
-                <span style={{ color: event.skipped ? 'rgba(200,196,190,0.3)' : 'var(--parch-dim)', minWidth: 150, flexShrink: 0 }}>
-                  {event.speaker}{event.unit ? ` · ${event.unit}` : ''}
-                </span>
-                <span style={{ color: event.skipped ? 'rgba(200,196,190,0.2)' : 'var(--parch)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {event.skipped ? '— omitido' : event.result || '—'}
-                </span>
-              </>
-            )}
-            {event.type === 'error' && (
-              <span style={{ color: 'var(--terra)' }}>⚠ {event.error}</span>
-            )}
-            {event.type === 'complete' && (
-              <span style={{ color: '#4ADE80', fontWeight: 600 }}>
-                ✅ Completado — {event.total_formalized} formalizados · {event.total_skipped} omitidos
-              </span>
-            )}
+              )}
+              {log.status === 'done' && `✓ ${log.formalized} formalizados · ${log.skipped} omitidos`}
+              {log.status === 'error' && `⚠ ${log.error}`}
+            </span>
           </div>
         ))}
+        {logs.length === 0 && <span style={{ color: 'var(--parch-dim)', opacity: 0.4, fontSize: 13 }}>Iniciando…</span>}
       </div>
 
       {error && (
-        <div style={{
-          marginTop: 16,
-          padding: '12px 16px',
-          background: 'rgba(196,98,45,0.1)',
-          border: '1px solid rgba(196,98,45,0.3)',
-          borderRadius: 8,
-          color: 'var(--terra)',
-          fontSize: 13,
-        }}>
+        <div style={{ marginTop: 16, padding: '12px 16px', background: 'rgba(196,98,45,0.1)', border: '1px solid rgba(196,98,45,0.3)', borderRadius: 8, color: 'var(--terra)', fontSize: 13 }}>
           ⚠️ {error}
         </div>
       )}
