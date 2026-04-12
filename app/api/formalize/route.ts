@@ -11,7 +11,7 @@ import type { DebateBlock } from '@/lib/types'
 export const runtime = 'nodejs'
 export const maxDuration = 300
 
-const client = new Anthropic()
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 const SYSTEM_PROMPT = `Eres un redactor especializado en Actas de Asamblea de Propiedad Horizontal en Panamá. 
 Tu función es convertir fragmentos de habla oral en párrafos formales de tercera persona para el acta legal.
