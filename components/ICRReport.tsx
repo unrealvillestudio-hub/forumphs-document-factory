@@ -38,6 +38,8 @@ const VERDICT_CONFIG = {
 }
 
 export default function ICRReportView({ report, loading }: ICRReportViewProps) {
+  if (!report && !loading) return null
+
   if (loading) {
     return (
       <div style={{
