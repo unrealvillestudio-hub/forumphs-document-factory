@@ -58,16 +58,25 @@ export default function ProcessingPipeline({ blocks, skeleton, onComplete, retry
       const agendaItems = skeleton?.agenda_items || []
       const assignedBlocks = assignBlocksToSections(blocks, agendaItems)
 
-      // Mark all chunks as running simultaneously
-      setChunks(prev => prev.map(c => ({ ...c, status: 'running' })))
+      const GROUP_SIZE = 6   // max concurrent — respects Supabase free tier
+      const GROUP_PAUSE = 2000  // ms between groups (~2s)
 
-      // Fan-out: fire ALL chunks simultaneously
+      // Fan-out in staggered groups: group 0 fires at 0ms, group 1 at 2s, etc.
       const chunkPromises = Array.from({ length: totalChunks }, async (_, i) => {
+        // Delay start based on group
+        const groupIndex = Math.floor(i / GROUP_SIZE)
+        if (groupIndex > 0) {
+          await new Promise(r => setTimeout(r, groupIndex * GROUP_PAUSE))
+        }
+
+        // Mark as running when group starts
+        setChunks(prev => prev.map(c => c.id === i ? { ...c, status: 'running' } : c))
+
         const start = i * CHUNK_SIZE
         const chunkBlocks = assignedBlocks.slice(start, start + CHUNK_SIZE)
 
         try {
-          // Retry up to 3 times on 503 (Supabase rate limit / cold start)
+          // Retry up to 3 times on 503 (Supabase rate limit)
           let res: Response | null = null
           for (let attempt = 0; attempt < 3; attempt++) {
             res = await fetch(EDGE_FN_URL, {
@@ -149,7 +158,7 @@ export default function ProcessingPipeline({ blocks, skeleton, onComplete, retry
           <span style={{ fontSize: 12, color: done ? '#4ADE80' : 'var(--amatista-light)', fontWeight: 500, letterSpacing: '0.05em' }}>
             {done
               ? `✅ COMPLETO — ${totalChunks} agentes finalizados`
-              : `PASO 0.5 · ${runningCount} AGENTES · ${doneCount}/${totalChunks}${retryAttempt > 0 ? ` · TOLERANCIA +${retryAttempt * 10}%` : ''}`
+              : `PASO 0.5 · ${runningCount} activos · ${doneCount}/${totalChunks} · grupos de 6${retryAttempt > 0 ? ` · +${retryAttempt * 10}% tolerancia` : ''}`
             }
           </span>
         </div>
@@ -161,8 +170,8 @@ export default function ProcessingPipeline({ blocks, skeleton, onComplete, retry
           {done
             ? `${chunks.reduce((s, c) => s + c.formalized, 0)} bloques formalizados · ${errorCount > 0 ? `${errorCount} agentes con fallback` : 'todos los agentes OK'}`
             : retryAttempt > 0
-              ? `Reintento ${retryAttempt} — tolerancia aumentada, umbral mínimo reducido`
-              : `${totalChunks} agentes trabajando simultáneamente — sin límite de tiempo por Supabase Edge Functions`
+              ? `Reintento ${retryAttempt} — tolerancia aumentada · grupos de 6 agentes con 2s de pausa`
+              : `${totalChunks} agentes en grupos de 6 — 2s entre grupos, sin timeouts`
           }
         </p>
       </div>
