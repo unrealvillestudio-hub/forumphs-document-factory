@@ -156,7 +156,7 @@ export default function Home() {
       const qaReport = data.qa_report
       const formalizedPct = qaReport?.formalized_pct ?? 0
       const estimatedPages = Math.round((data.word_count || 0) / 500)
-      const needsRetry = (formalizedPct < 70 || estimatedPages < 25) && autoRetryRef.current < MAX_AUTO_RETRIES
+      const needsRetry = (formalizedPct < 70 && estimatedPages < 22) && autoRetryRef.current < MAX_AUTO_RETRIES
 
       setOutput({
         docx_base64: data.docx_base64,
@@ -192,6 +192,13 @@ export default function Home() {
     const actaText = output.acta_text || ''
     setIcrLoading(true)
     setStep('icr')
+
+    // Timeout: if ICR takes >45s, advance to done anyway
+    const timeout = setTimeout(() => {
+      setIcrLoading(false)
+      setStep('done')
+    }, 45000)
+
     try {
       const icrRes = await fetch('/api/icr', {
         method: 'POST',
@@ -201,7 +208,11 @@ export default function Home() {
       const icrData = await icrRes.json()
       if (icrData.success) setIcrReport(icrData.report)
     } catch { /* non-blocking */ }
-    finally { setIcrLoading(false) }
+    finally {
+      clearTimeout(timeout)
+      setIcrLoading(false)
+      setStep('done')
+    }
   }
 
   // ---- Download ----
@@ -427,13 +438,15 @@ export default function Home() {
           </div>
         )}
 
-        {/* Download step */}
-        {step === 'done' && output && (
+        {/* Download step — available from ICR step onwards */}
+        {(step === 'icr' || step === 'done') && output && (
           <div style={{ marginTop: 24, display: 'flex', gap: 12 }}>
             <button className="df-btn-primary" onClick={handleDownload} style={{ padding: '12px 32px', fontSize: 15 }}>
               ⬇ Descargar .docx
             </button>
-            <button className="df-btn-ghost" onClick={handleReset}>↺ Nueva acta</button>
+            {step === 'done' && (
+              <button className="df-btn-ghost" onClick={handleReset}>↺ Nueva acta</button>
+            )}
           </div>
         )}
 
