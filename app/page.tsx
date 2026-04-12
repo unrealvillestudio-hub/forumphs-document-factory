@@ -5,6 +5,8 @@ import UploadZone from '@/components/UploadZone'
 import PreflightForm from '@/components/PreflightForm'
 import ProcessingPipeline from '@/components/ProcessingPipeline'
 import QAReportView from '@/components/QAReport'
+import ICRReportView from '@/components/ICRReport'
+import type { ICRReport } from '@/lib/types'
 import { createJob, updateJob, loadJob, saveJobId, loadJobId, clearJobId } from '@/lib/supabaseSession'
 import type {
   ParsedHypalZip,
@@ -21,6 +23,7 @@ interface DocOutput {
   filename: string
   word_count: number
   qa_report: QAReport
+  acta_text?: string
 }
 
 const STEPS = [
@@ -40,6 +43,8 @@ export default function Home() {
   const [blocksToFormalize, setBlocksToFormalize] = useState<DebateBlock[]>([])
   const [formalizedBlocks, setFormalizedBlocks] = useState<DebateBlock[]>([])
   const [output, setOutput] = useState<DocOutput | null>(null)
+  const [icrReport, setIcrReport] = useState<ICRReport | null>(null)
+  const [icrLoading, setIcrLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
   const [jobId, setJobId] = useState<string | null>(null)
@@ -150,6 +155,20 @@ export default function Home() {
         qa_report: data.qa_report,
       })
       setStep('done')
+      // Run ICR — second QA layer
+      if (data.acta_text && parsed) { // acta_text available from generate
+        setIcrLoading(true)
+        try {
+          const icrRes = await fetch('/api/icr', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ acta_text: data.acta_text, parsed }),
+          })
+          const icrData = await icrRes.json()
+          if (icrData.success) setIcrReport(icrData.report)
+        } catch { /* ICR is non-blocking */ }
+        finally { setIcrLoading(false) }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al generar')
       setStep('error')
@@ -179,6 +198,8 @@ export default function Home() {
     clearJobId()
     setJobId(null)
     setParsed(null)
+    setIcrReport(null)
+    setIcrLoading(false)
     setGaps([])
     setPreflight(null)
     setBlocksToFormalize([])
@@ -307,6 +328,7 @@ export default function Home() {
 
         {/* Done */}
         {step === 'done' && output && (
+          <>
           <QAReportView
             report={output.qa_report}
             wordCount={output.word_count}
@@ -314,6 +336,8 @@ export default function Home() {
             onDownload={handleDownload}
             onRegenerate={handleReset}
           />
+          <ICRReportView report={icrReport!} loading={icrLoading} />
+          </>
         )}
 
         {/* Error */}

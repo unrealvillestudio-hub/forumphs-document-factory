@@ -25,6 +25,12 @@ const PREAMBLE_NOISE = /^(okay[,.]?\s+|sí[,.]?\s+|si[,.]?\s+|buenas tardes[,.]?
 
 const LOGISTICA_NAMES = ['hipal', 'hypal', 'zoom', 'moderador', 'técnico', 'soporte']
 
+// Administration staff — should NOT be labeled as propietario/a
+const ADMIN_NAMES = [
+  'ivette', 'iveth', 'flores', 'saldaña', 'irja', 'administraci',
+  'administrador', 'administradora', 'gerente', 'conserje',
+]
+
 const NOMBRES_FEMENINOS = new Set([
   'reyna', 'ivette', 'dayana', 'martha', 'marta', 'clara', 'kathia',
   'karen', 'lourdes', 'milkori', 'magda', 'miriam', 'mirian',
@@ -63,8 +69,8 @@ function detectRole(speakerRaw: string, speakerName: string): DebateBlock['speak
 
   if (LOGISTICA_NAMES.some(l => raw.includes(l) || name.includes(l))) return 'logistica'
 
-  // Ivette / administración
-  if (name.includes('ivette') || name.includes('flores') || raw.includes('administr')) return 'administracion'
+  // Ivette / administración — check expanded admin list
+  if (ADMIN_NAMES.some(n => name.includes(n) || raw.includes(n))) return 'administracion'
 
   // Abogado
   if (name.includes('roach') || name.includes('abogad') || raw.includes('abogad')) return 'abogado'

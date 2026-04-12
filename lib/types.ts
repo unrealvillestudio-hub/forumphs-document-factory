@@ -167,6 +167,28 @@ export interface QAReport {
   verdict: 'PASS' | 'WARN' | 'FAIL' | 'STOP'
 }
 
+
+// ---- ICR — Industrial Consistency Review ----
+
+export interface ICRFinding {
+  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
+  category: 'VOTE_INCONSISTENCY' | 'ROLE_ERROR' | 'LEGAL_COMPLIANCE' | 'DATA_MISMATCH' | 'NARRATIVE_QUALITY' | 'STRUCTURAL'
+  location: string
+  issue: string
+  suggestion: string
+}
+
+export interface ICRReport {
+  verdict: 'APPROVED' | 'APPROVED_WITH_NOTES' | 'REQUIRES_CORRECTION' | 'BLOCKED'
+  total_findings: number
+  critical: number
+  high: number
+  medium: number
+  low: number
+  findings: ICRFinding[]
+  auditor_summary: string
+}
+
 // ---- Document generation ----
 
 export interface GeneratedActa {
@@ -233,6 +255,7 @@ export interface GenerateResponse {
   filename?: string
   word_count?: number
   qa_report?: QAReport
+  acta_text?: string
   error?: string
 }
 

@@ -84,7 +84,25 @@ export function detectPreflightGaps(parsed: ParsedHypalZip): PreflightGap[] {
     })
   }
 
-  // 6. Time end (if not found)
+  // 6. President and Secretary names for signatures
+  gaps.push({
+    field: 'president_name',
+    label: 'Nombre del/la Presidente/a de la JD',
+    description: 'Nombre completo para la firma del acta (ej: Alex Piña)',
+    required: false,
+    type: 'text',
+    value: s.president_name || '',
+  })
+  gaps.push({
+    field: 'secretary_name',
+    label: 'Nombre del/la Secretario/a de la JD',
+    description: 'Nombre completo para la firma del acta (ej: Laura Gaviria)',
+    required: false,
+    type: 'text',
+    value: s.secretary_name || '',
+  })
+
+  // 7. Time end (if not found)
   if (!s.time_end || s.time_end.includes('PENDIENTE')) {
     gaps.push({
       field: 'confirmed_time_end',
@@ -114,6 +132,12 @@ export function applyPreflightAnswers(
   }
   if (answers.total_units) {
     updated.skeleton.total_units = Number(answers.total_units)
+  }
+  if (answers.president_name) {
+    updated.skeleton.president_name = String(answers.president_name)
+  }
+  if (answers.secretary_name) {
+    updated.skeleton.secretary_name = String(answers.secretary_name)
   }
 
   return updated
