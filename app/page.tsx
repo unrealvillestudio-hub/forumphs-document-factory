@@ -45,17 +45,16 @@ export default function Home() {
   const [jobId, setJobId] = useState<string | null>(null)
 
   // ---- Step 1: Upload & Parse ZIP ----
-  const handleFileSelected = async (file: File) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleFileSelected = async (extracted: any) => {
     setUploading(true)
     setError(null)
 
     try {
-      const formData = new FormData()
-      formData.append('zip', file)
-
       const res = await fetch('/api/parse', {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(extracted),
       })
 
       const data = await res.json()
@@ -279,7 +278,7 @@ export default function Home() {
       }}>
         {/* Upload */}
         {step === 'upload' && (
-          <UploadZone onFileSelected={handleFileSelected} loading={uploading} />
+          <UploadZone onDataReady={handleFileSelected} loading={uploading} />
         )}
 
         {/* Pre-flight */}

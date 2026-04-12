@@ -3,22 +3,30 @@
 import { useCallback, useState } from 'react'
 
 interface UploadZoneProps {
-  onFileSelected: (file: File) => void
+  onDataReady: (data: Record<string, unknown>) => void
   loading: boolean
 }
 
-export default function UploadZone({ onFileSelected, loading }: UploadZoneProps) {
+export default function UploadZone({ onDataReady, loading }: UploadZoneProps) {
   const [dragging, setDragging] = useState(false)
   const [fileName, setFileName] = useState<string | null>(null)
+  const [error, setError] = useState('')
 
-  const handleFile = useCallback((file: File) => {
-    if (!file.name.endsWith('.zip')) {
-      alert('Por favor sube un archivo .zip de Hypal')
+  const handleFile = useCallback(async (file: File) => {
+    if (!file.name.endsWith('.json')) {
+      setError('Sube el archivo .json generado por el ZIP Extractor')
       return
     }
+    setError('')
     setFileName(file.name)
-    onFileSelected(file)
-  }, [onFileSelected])
+    try {
+      const text = await file.text()
+      const data = JSON.parse(text)
+      onDataReady(data)
+    } catch {
+      setError('El archivo JSON no es válido')
+    }
+  }, [onDataReady])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -35,172 +43,85 @@ export default function UploadZone({ onFileSelected, loading }: UploadZoneProps)
   return (
     <div className="fade-in">
 
-      {/* ── LOGOTYPE BLOCK ── */}
+      {/* Logotype */}
       <div style={{ marginBottom: 56, textAlign: 'center' }}>
-
-        {/* Parent brand label */}
-        <div style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 8,
-          marginBottom: 20,
-        }}>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
           <span style={{
-            display: 'inline-block',
-            width: 6, height: 6,
-            borderRadius: '50%',
-            background: 'var(--amatista)',
-            animation: 'prompt-blink 1.1s step-end infinite',
+            display: 'inline-block', width: 6, height: 6, borderRadius: '50%',
+            background: 'var(--amatista)', animation: 'prompt-blink 1.1s step-end infinite',
           }} />
-          <span style={{
-            fontFamily: 'DM Sans, sans-serif',
-            fontSize: 11,
-            fontWeight: 500,
-            letterSpacing: '0.2em',
-            textTransform: 'uppercase',
-            color: 'var(--amatista-light)',
-          }}>
+          <span style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 11, fontWeight: 500, letterSpacing: '0.2em', textTransform: 'uppercase' as const, color: 'var(--amatista-light)' }}>
             ForumPHs
           </span>
         </div>
-
-        {/* Logotype: Document FACTORY */}
         <div style={{ lineHeight: 1, marginBottom: 24 }}>
-          <div style={{
-            fontFamily: 'Cormorant Garamond, serif',
-            fontSize: 56,
-            fontWeight: 300,
-            fontStyle: 'italic',
-            color: 'var(--parch)',
-            letterSpacing: '-0.01em',
-            lineHeight: 1,
-          }}>
+          <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 56, fontWeight: 300, fontStyle: 'italic', color: 'var(--parch)', lineHeight: 1 }}>
             Document
           </div>
-          <div style={{
-            fontFamily: 'DM Sans, sans-serif',
-            fontSize: 44,
-            fontWeight: 700,
-            letterSpacing: '0.22em',
-            textTransform: 'uppercase',
-            color: 'var(--amatista-light)',
-            lineHeight: 1,
-            marginTop: -4,
-          }}>
+          <div style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 44, fontWeight: 700, letterSpacing: '0.22em', textTransform: 'uppercase' as const, color: 'var(--amatista-light)', lineHeight: 1, marginTop: -4 }}>
             FACTORY
           </div>
         </div>
-
-        {/* Tagline */}
-        <p style={{
-          fontFamily: 'EB Garamond, serif',
-          fontSize: 20,
-          fontStyle: 'italic',
-          color: 'var(--parch-dim)',
-          margin: 0,
-          letterSpacing: '0.01em',
-        }}>
+        <p style={{ fontFamily: 'EB Garamond, serif', fontSize: 20, fontStyle: 'italic', color: 'var(--parch-dim)', margin: 0 }}>
           Del ZIP al acta firmable. En minutos.
         </p>
       </div>
 
-      {/* ── UPLOAD AREA ── */}
+      {/* Upload zone */}
       <label
         onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
         onDragLeave={() => setDragging(false)}
         onDrop={handleDrop}
         style={{
           display: 'block',
-          border: `2px dashed ${dragging ? 'var(--amatista)' : 'rgba(92,52,114,0.35)'}`,
-          borderRadius: 16,
-          padding: '48px 32px',
-          textAlign: 'center',
+          border: `2px dashed ${dragging ? 'var(--amatista)' : error ? 'rgba(196,98,45,0.4)' : 'rgba(92,52,114,0.35)'}`,
+          borderRadius: 16, padding: '52px 32px', textAlign: 'center',
           cursor: loading ? 'not-allowed' : 'pointer',
           background: dragging ? 'rgba(92,52,114,0.07)' : 'rgba(28,34,51,0.5)',
-          transition: 'all 0.2s ease',
-          backdropFilter: 'blur(8px)',
+          transition: 'all 0.2s ease', backdropFilter: 'blur(8px)',
         }}
       >
-        <input
-          type="file"
-          accept=".zip"
-          className="hidden"
-          onChange={handleChange}
-          disabled={loading}
-        />
+        <input type="file" accept=".json" className="hidden" onChange={handleChange} disabled={loading} />
 
         {loading ? (
           <div style={{ color: 'var(--parch-dim)' }}>
-            <div style={{
-              width: 36, height: 36,
-              border: '2px solid rgba(92,52,114,0.3)',
-              borderTop: '2px solid var(--amatista)',
-              borderRadius: '50%',
-              margin: '0 auto 14px',
-              animation: 'spin-slow 1s linear infinite',
-            }} />
-            <p style={{ margin: 0, fontSize: 14 }}>Procesando ZIP…</p>
+            <div style={{ width: 36, height: 36, border: '2px solid rgba(92,52,114,0.3)', borderTop: '2px solid var(--amatista)', borderRadius: '50%', margin: '0 auto 14px', animation: 'spin-slow 1s linear infinite' }} />
+            <p style={{ margin: 0, fontSize: 14 }}>Analizando datos…</p>
           </div>
-        ) : fileName ? (
+        ) : fileName && !error ? (
           <div>
-            <div style={{ fontSize: 36, marginBottom: 10 }}>📦</div>
+            <div style={{ fontSize: 36, marginBottom: 10 }}>✅</div>
             <p style={{ color: 'var(--parch)', fontWeight: 500, margin: '0 0 4px', fontSize: 15 }}>{fileName}</p>
-            <p style={{ color: 'var(--parch-dim)', fontSize: 12, margin: 0 }}>Procesando…</p>
+            <p style={{ color: 'var(--parch-dim)', fontSize: 12, margin: 0 }}>JSON cargado. Procesando…</p>
           </div>
         ) : (
           <div>
-            <div style={{
-              width: 56, height: 56,
-              background: 'rgba(92,52,114,0.12)',
-              borderRadius: '50%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              margin: '0 auto 18px',
-              fontSize: 24,
-            }}>
-              📁
+            <div style={{ width: 56, height: 56, background: 'rgba(92,52,114,0.12)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 18px', fontSize: 24 }}>
+              {error ? '⚠️' : '{}'}
             </div>
-            <p style={{ color: 'var(--parch)', fontWeight: 500, margin: '0 0 6px', fontSize: 16 }}>
-              Arrastra el ZIP de Hypal aquí
+            <p style={{ color: error ? 'var(--terra)' : 'var(--parch)', fontWeight: 500, margin: '0 0 6px', fontSize: 16 }}>
+              {error || 'Arrastra el parsed.json aquí'}
             </p>
-            <p style={{ color: 'var(--parch-dim)', fontSize: 13, margin: '0 0 18px' }}>
-              o haz clic para seleccionar
+            <p style={{ color: 'var(--parch-dim)', fontSize: 13, margin: '0 0 4px' }}>
+              {error ? 'Genera el JSON con el ZIP Extractor primero' : 'Generado por ForumPHs ZIP Extractor'}
             </p>
-            <div style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
-              {['Resumen.docx','Lista_Asistencia.xlsx','Votaciones.xlsx','Transcripcion.docx','Chats.docx','Quorum.docx'].map(f => (
-                <span key={f} style={{
-                  fontSize: 10,
-                  padding: '3px 8px',
-                  background: 'rgba(92,52,114,0.15)',
-                  borderRadius: 4,
-                  color: 'var(--parch-dim)',
-                  fontFamily: 'DM Sans, monospace',
-                  letterSpacing: '0.02em',
-                }}>
-                  {f}
-                </span>
-              ))}
-            </div>
+            <p style={{ color: 'rgba(200,196,190,0.3)', fontSize: 11, margin: 0, letterSpacing: '0.05em' }}>
+              HYPAL_[PH]_[FECHA].json
+            </p>
           </div>
         )}
       </label>
 
-      {/* ── CAPABILITY CARDS ── */}
+      {/* Capability cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginTop: 20 }}>
         {[
           { icon: '⚡', label: 'Paso 0.5 activo', desc: 'Claude API formaliza cada intervención en 3ª persona legal' },
-          { icon: '🔍', label: 'QA 100% absoluto', desc: 'Lectura de cada oración + completeness score antes de entregar' },
-          { icon: '💬', label: 'Interactivo', desc: 'Detecta información faltante y pregunta antes de generar' },
+          { icon: '🔍', label: 'QA 100% absoluto', desc: 'Completeness score + lectura de cada oración antes de entregar' },
+          { icon: '💬', label: 'Interactivo', desc: 'Solicita información faltante (Finca, convocatoria, hora cierre)' },
         ].map(card => (
-          <div key={card.label} style={{
-            background: 'rgba(28,34,51,0.7)',
-            border: '1px solid rgba(92,52,114,0.18)',
-            borderRadius: 10,
-            padding: '14px 16px',
-          }}>
+          <div key={card.label} style={{ background: 'rgba(28,34,51,0.7)', border: '1px solid rgba(92,52,114,0.18)', borderRadius: 10, padding: '14px 16px' }}>
             <div style={{ fontSize: 18, marginBottom: 6 }}>{card.icon}</div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--parch)', marginBottom: 3, fontFamily: 'DM Sans, sans-serif' }}>{card.label}</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--parch)', marginBottom: 3 }}>{card.label}</div>
             <div style={{ fontSize: 11, color: 'var(--parch-dim)', lineHeight: 1.4 }}>{card.desc}</div>
           </div>
         ))}
