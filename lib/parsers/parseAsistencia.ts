@@ -1,65 +1,118 @@
 /**
- * parseAsistencia.ts
- * Parses Lista_de_Asistencia.xlsx (SheetJS output as JSON rows)
+ * parseAsistencia.ts — v2
+ * Handles Hypal's actual XLSX format:
+ * Headers: 247 | Unidad | Participante | Ingreso | Salida | Asistencia | ...
+ *
+ * parseVotaciones — v2
+ * Hypal votaciones format: one sheet per question.
+ * The question is the first column header key.
+ * Each row = one apartment vote (Si/No).
+ * Summary rows have __EMPTY_2=Si/No, __EMPTY_3=count, __EMPTY_4=pct
  */
 
-import type { AttendanceRecord } from '../types'
+import type { AttendanceRecord, VotationRecord } from '../types'
 
-export function parseAsistencia(rows: Record<string, string>[]): AttendanceRecord[] {
+export function parseAsistencia(rows: Record<string, unknown>[]): AttendanceRecord[] {
   const records: AttendanceRecord[] = []
 
   for (const row of rows) {
-    // Try to find unit column (various header names)
-    const unit = row['UNIDAD'] || row['Unidad'] || row['APARTAMENTO'] || row['Apt'] || row['Unit'] || ''
-    const owner = row['PROPIETARIO'] || row['Propietario'] || row['NOMBRE'] || row['Nombre'] || row['Owner'] || ''
-    const rep = row['REPRESENTADO POR'] || row['Representante'] || row['Representative'] || ''
-    const tower = row['TORRE'] || row['Torre'] || ''
+    // Hypal format: Unidad, Participante
+    const unit =
+      String(row['Unidad'] || row['UNIDAD'] || row['unidad'] ||
+             row['Apartamento'] || row['Unit'] || row['APARTAMENTO'] || '').trim()
 
-    if (!unit && !owner) continue
+    const owner =
+      String(row['Participante'] || row['PARTICIPANTE'] ||
+             row['Propietario'] || row['PROPIETARIO'] ||
+             row['Nombre'] || row['NOMBRE'] || row['Owner'] || '').trim()
+
+    const rep =
+      String(row['Representado por'] || row['REPRESENTADO POR'] ||
+             row['Representante'] || row['Representative'] || '').trim()
+
+    // Skip header-like rows and empty rows
+    if (!unit || !owner) continue
+    if (unit.toLowerCase() === 'unidad' || owner.toLowerCase() === 'participante') continue
+    if (unit.toLowerCase() === 'apartamento') continue
+
+    // Only include present attendees (Hypal marks as "Presente")
+    const asistencia = String(row['Asistencia'] || row['ASISTENCIA'] || 'Presente').trim()
+    if (asistencia && asistencia.toLowerCase() === 'ausente') continue
 
     records.push({
-      unit: unit.toString().trim(),
-      owner_name: owner.toString().trim(),
-      represented_by: rep ? rep.toString().trim() : undefined,
-      tower: tower ? tower.toString().trim() : undefined,
+      unit,
+      owner_name: owner,
+      represented_by: rep || undefined,
     })
   }
 
   return records
 }
 
-/**
- * parseVotaciones.ts
- * Parses Resultados_de_las_votaciones.xlsx
- */
+export function parseVotaciones(rows: Record<string, unknown>[]): VotationRecord[] {
+  if (!rows || rows.length === 0) return []
 
-import type { VotationRecord } from '../types'
-
-export function parseVotaciones(rows: Record<string, string>[]): VotationRecord[] {
   const records: VotationRecord[] = []
 
+  // The question is encoded in the first column's key name
+  // e.g. "Pregunta:¿Aprueba la asamblea el orden del dia propuesto para esta reunión?"
+  const firstKey = Object.keys(rows[0] || {})[0] || ''
+  const questionMatch = firstKey.match(/Pregunta[:\s]*(.+)/i)
+  const topic = questionMatch ? questionMatch[1].trim() : firstKey.trim()
+
+  if (!topic) return []
+
+  // Count votes from individual rows
+  let yesCount = 0
+  let noCount = 0
+  let summaryYes: number | null = null
+  let summaryNo: number | null = null
+  let summaryPct: number | null = null
+
   for (const row of rows) {
-    const topic = row['TEMA'] || row['Tema'] || row['PUNTO'] || row['Asunto'] || row['Description'] || ''
-    const yes = parseInt(String(row['SI'] || row['Sí'] || row['YES'] || row['A FAVOR'] || '0'))
-    const no = parseInt(String(row['NO'] || row['EN CONTRA'] || '0'))
-    const abs = parseInt(String(row['ABSTENCIONES'] || row['Abstenciones'] || '0'))
-    const total = parseInt(String(row['TOTAL'] || row['HABILITADOS'] || '0'))
+    const apt = String(row[firstKey] || '').trim()
+    const voto = String(row['__EMPTY'] || '').trim().toLowerCase()
+    const summaryLabel = String(row['__EMPTY_2'] || '').trim().toLowerCase()
+    const summaryCount = row['__EMPTY_3']
+    const summaryPctVal = row['__EMPTY_4']
 
-    if (!topic && isNaN(yes)) continue
-    if (!String(topic).trim()) continue  // skip empty topic rows
+    // Skip header rows
+    if (apt.toLowerCase() === 'apartamento' || apt === '') continue
 
-    const pct = total > 0 ? (yes / total) * 100 : yes + no > 0 ? (yes / (yes + no)) * 100 : 0
+    // Extract summary totals (rows with __EMPTY_2 = Si/No and a count)
+    if ((summaryLabel === 'si' || summaryLabel === 'sí') && summaryCount !== '' && summaryCount !== undefined) {
+      const n = Number(summaryCount)
+      if (!isNaN(n) && n > 0) {
+        summaryYes = n
+        if (summaryPctVal !== '' && summaryPctVal !== undefined) {
+          summaryPct = Math.round(Number(summaryPctVal) * 100 * 100) / 100
+        }
+      }
+    }
+    if (summaryLabel === 'no' && summaryCount !== '' && summaryCount !== undefined) {
+      const n = Number(summaryCount)
+      if (!isNaN(n)) summaryNo = n
+    }
 
-    records.push({
-      topic: topic.toString().trim(),
-      yes_votes: isNaN(yes) ? 0 : yes,
-      no_votes: isNaN(no) ? 0 : no,
-      abstentions: isNaN(abs) ? undefined : abs,
-      total_eligible: isNaN(total) ? undefined : total,
-      pct_yes: Math.round(pct * 100) / 100,
-      approved: yes > no,
-    })
+    // Count individual votes
+    if (apt.toLowerCase().includes('apartamento') || apt.match(/^[A-Z]\d+/)) {
+      if (voto === 'si' || voto === 'sí') yesCount++
+      else if (voto === 'no') noCount++
+    }
   }
+
+  // Prefer summary counts (more reliable) over individual count
+  const finalYes = summaryYes !== null ? summaryYes : yesCount
+  const finalNo = summaryNo !== null ? summaryNo : noCount
+  const finalPct = summaryPct !== null ? summaryPct : (finalYes + finalNo > 0 ? Math.round((finalYes / (finalYes + finalNo)) * 10000) / 100 : 0)
+
+  records.push({
+    topic,
+    yes_votes: finalYes,
+    no_votes: finalNo,
+    pct_yes: finalPct,
+    approved: finalYes > finalNo,
+  })
 
   return records
 }

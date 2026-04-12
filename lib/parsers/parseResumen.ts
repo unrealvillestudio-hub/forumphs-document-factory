@@ -17,6 +17,9 @@ function extractDate(text: string): string {
   // Format: "21 de abril de 2025" (no weekday)
   const m2 = text.match(/\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de\s+\d{4}/i)
   if (m2) return m2[0]
+  // Format: "Fecha: 07 de abril de 2026" — Hypal resumen header
+  const m2b = text.match(/[Ff]echa[:\s]+([\d]{1,2}\s+de\s+\w+\s+de\s+\d{4})/i)
+  if (m2b) return m2b[1].trim()
   // Format: "abril 21, 2025" or "21/04/2025"
   const m3 = text.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}/)
   if (m3) return m3[0]
