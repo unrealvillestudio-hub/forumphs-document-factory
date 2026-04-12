@@ -47,6 +47,8 @@ export default function Home() {
   const [output, setOutput] = useState<DocOutput | null>(null)
   const [icrReport, setIcrReport] = useState<ICRReport | null>(null)
   const [icrLoading, setIcrLoading] = useState(false)
+  const [autoRetryCount, setAutoRetryCount] = useState(0)
+  const MAX_AUTO_RETRIES = 2
   const [error, setError] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
   const [jobId, setJobId] = useState<string | null>(null)
@@ -150,6 +152,11 @@ export default function Home() {
       if (!data.success) throw new Error(data.error || 'Error al generar el acta')
 
       if (jobId) updateJob(jobId, { stage: 'done' as any, qa_report: data.qa_report, output_filename: data.filename })
+      const qaReport = data.qa_report
+      const formalizedPct = qaReport?.formalized_pct ?? 0
+      const estimatedPages = Math.round((data.word_count || 0) / 500)
+      const needsRetry = (formalizedPct < 70 || estimatedPages < 25) && autoRetryCount < MAX_AUTO_RETRIES
+
       setOutput({
         docx_base64: data.docx_base64,
         filename: data.filename,
@@ -157,6 +164,13 @@ export default function Home() {
         qa_report: data.qa_report,
         acta_text: data.acta_text,
       })
+
+      if (needsRetry) {
+        setAutoRetryCount(prev => prev + 1)
+        // Auto-regenerate: go back to formalizing with same blocks
+        setTimeout(() => generateDocx(), 800)
+        return
+      }
       setStep('qa')
       // ICR is triggered manually by user clicking "Continuar → ICR"
     } catch (err) {
@@ -208,6 +222,7 @@ export default function Home() {
     setParsed(null)
     setIcrReport(null)
     setIcrLoading(false)
+    setAutoRetryCount(0)
     setGaps([])
     setPreflight(null)
     setBlocksToFormalize([])
@@ -328,10 +343,10 @@ export default function Home() {
               fontWeight: 400,
               margin: '0 0 8px',
             }}>
-              Generando el Acta
+              {autoRetryCount > 0 ? `Mejorando cobertura (intento ${autoRetryCount + 1}/${MAX_AUTO_RETRIES + 1})` : 'Generando el Acta'}
             </h2>
             <p style={{ color: 'var(--parch-dim)', fontSize: 14 }}>
-              Ensamblando secciones · aplicando formato · construyendo .docx
+              {autoRetryCount > 0 ? 'QA detectó cobertura insuficiente — regenerando automáticamente' : 'Ensamblando secciones · aplicando formato · construyendo .docx'}
             </p>
           </div>
         )}

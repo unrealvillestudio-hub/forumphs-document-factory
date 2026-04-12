@@ -157,6 +157,7 @@ export interface CompletenessReport {
 }
 
 export interface QAReport {
+  formalized_pct?: number
   total_errors: number
   by_type: Partial<Record<QAErrorType, number>>
   errors: QAError[]

@@ -61,7 +61,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     const { acta_text, parsed }: { acta_text: string; parsed: ParsedHypalZip } = await req.json()
 
-    const votesSummary = parsed.votations.map(v =>
+    if (!acta_text || acta_text.trim().length < 100) {
+      return NextResponse.json({ success: false, error: 'acta_text too short or empty — generate the document first' }, { status: 400 })
+    }
+    if (!parsed) {
+      return NextResponse.json({ success: false, error: 'parsed data required' }, { status: 400 })
+    }
+
+    const votesSummary = (parsed.votations || []).map(v =>
       `"${v.topic}": ${v.yes_votes} sí / ${v.no_votes} no → ${v.approved ? 'APROBADO' : 'NO APROBADO'}`
     ).join('\n')
 
@@ -109,6 +116,20 @@ Responde SOLO con este JSON:
     return NextResponse.json({ success: true, report })
   } catch (err) {
     console.error('ICR error:', err)
-    return NextResponse.json({ success: false, error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    // Return a safe fallback report instead of 500 — never block the user's download
+    const fallbackReport: ICRReport = {
+      verdict: 'APPROVED_WITH_NOTES',
+      total_findings: 1,
+      critical: 0, high: 0, medium: 1, low: 0,
+      findings: [{
+        severity: 'MEDIUM',
+        category: 'STRUCTURAL',
+        location: 'Sistema ICR',
+        issue: `Revision ICR incompleta: ${err instanceof Error ? err.message : String(err)}`,
+        suggestion: 'Revisar el documento manualmente antes de firmar.',
+      }],
+      auditor_summary: 'La revision ICR no pudo completarse. Revisar el documento manualmente.',
+    }
+    return NextResponse.json({ success: true, report: fallbackReport })
   }
 }

@@ -205,7 +205,9 @@ export function runQAScan(
   else if (totalErrors <= 100) verdict = 'FAIL'
   else verdict = 'STOP'
 
+  const fPct = formalizedBlocks ? Math.round((formalizedBlocks.filter(b => b.text_formal && !b.skip).length / Math.max(formalizedBlocks.length, 1)) * 100) : 0
   return {
+    formalized_pct: fPct,
     total_errors: totalErrors,
     by_type: byType,
     errors,
