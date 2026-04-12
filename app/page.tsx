@@ -168,9 +168,11 @@ export default function Home() {
 
       if (needsRetry) {
         autoRetryRef.current += 1
+        // Reset formalized blocks — forces ProcessingPipeline to re-run
+        // with new retryAttempt (higher tolerance). generateDocx will be
+        // called automatically by handleFormalizationComplete when agents finish.
+        setFormalizedBlocks([])
         setStep('formalizing')
-        setTimeout(() => setStep('generating'), 800)
-        setTimeout(() => generateDocx(), 800)
         return
       }
       // Max retries reached or threshold met — proceed to QA
@@ -322,6 +324,7 @@ export default function Home() {
         {/* Formalizing */}
         {step === 'formalizing' && blocksToFormalize.length > 0 && (
           <ProcessingPipeline
+            key={`pipeline-${autoRetryRef.current}`}
             blocks={blocksToFormalize}
             skeleton={parsed?.skeleton}
             onComplete={handleFormalizationComplete}
