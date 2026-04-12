@@ -126,14 +126,8 @@ function cleanPreamble(text: string): string {
 
 function shouldSkip(text: string): { skip: boolean; reason?: string } {
   const t = text.trim().toLowerCase()
-  if (!t) return { skip: true, reason: 'empty' }
-  if (t.length < 40) {
-    if (SKIP_EXACT.has(t)) return { skip: true, reason: 'single_word' }
-    if (t.length < 20) return { skip: true, reason: 'too_short' }
-  }
-  for (const phrase of SKIP_CONTAINS) {
-    if (t.includes(phrase.toLowerCase())) return { skip: true, reason: 'logistica' }
-  }
+  // Only skip completely empty text — Claude decides everything else
+  if (!t || t.length < 4) return { skip: true, reason: 'empty' }
   return { skip: false }
 }
 
@@ -212,7 +206,8 @@ export function parseTranscripcion(rawText: string): DebateBlock[] {
   const blocks: DebateBlock[] = []
 
   for (const line of consolidated) {
-    const cleaned = cleanPreamble(line.text)
+    const rawCleaned = cleanPreamble(line.text)
+    const cleaned = rawCleaned.trim() || line.text.trim()  // fallback to raw if cleaning empties
     const { skip, reason } = shouldSkip(cleaned)
 
     const speakerName = extractSpeakerName(line.speaker)
@@ -229,7 +224,7 @@ export function parseTranscripcion(rawText: string): DebateBlock[] {
       speaker_unit: speakerUnit,
       speaker_role: role,
       text_raw: line.text,
-      text_cleaned: cleaned,
+      text_cleaned: cleaned || line.text.trim(),
       skip: skip,
       skip_reason: reason,
     })

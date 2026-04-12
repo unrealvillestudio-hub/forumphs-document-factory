@@ -155,6 +155,7 @@ export default function Home() {
         filename: data.filename,
         word_count: data.word_count,
         qa_report: data.qa_report,
+        acta_text: data.acta_text,
       })
       setStep('qa')
       // ICR is triggered manually by user clicking "Continuar → ICR"
@@ -168,14 +169,15 @@ export default function Home() {
 
   // ---- ICR (user-triggered) ----
   const runICR = async () => {
-    if (!output?.acta_text || !parsed) { setStep('icr'); return }
+    if (!output || !parsed) { setStep('icr'); return }
+    const actaText = output.acta_text || ''
     setIcrLoading(true)
     setStep('icr')
     try {
       const icrRes = await fetch('/api/icr', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ acta_text: output.acta_text, parsed }),
+        body: JSON.stringify({ acta_text: actaText, parsed }),
       })
       const icrData = await icrRes.json()
       if (icrData.success) setIcrReport(icrData.report)
