@@ -29,6 +29,7 @@ const LOGISTICA_NAMES = ['hipal', 'hypal', 'zoom', 'moderador', 'técnico', 'sop
 const ADMIN_NAMES = [
   'ivette', 'iveth', 'flores', 'saldaña', 'irja', 'administraci',
   'administrador', 'administradora', 'gerente', 'conserje',
+  'daniel puentes', 'puentes', 'hypal', 'hipal',
 ]
 
 const NOMBRES_FEMENINOS = new Set([

@@ -59,79 +59,54 @@ export default function ProcessingPipeline({ blocks, skeleton, onComplete, retry
       const assignedBlocks = assignBlocksToSections(blocks, agendaItems)
 
       const GROUP_SIZE = 6   // max concurrent — respects Supabase free tier
-      const GROUP_PAUSE = 2000  // ms between groups (~2s)
 
-      // Fan-out in staggered groups: group 0 fires at 0ms, group 1 at 2s, etc.
-      const chunkPromises = Array.from({ length: totalChunks }, async (_, i) => {
-        // Delay start based on group
-        const groupIndex = Math.floor(i / GROUP_SIZE)
-        if (groupIndex > 0) {
-          await new Promise(r => setTimeout(r, groupIndex * GROUP_PAUSE))
-        }
+      // Sequential groups: fire GROUP_SIZE agents, wait for ALL to finish, then next group
+      const allResults2: DebateBlock[] = new Array(totalBlocks)
+      const totalGroups = Math.ceil(totalChunks / GROUP_SIZE)
 
-        // Mark as running when group starts
-        setChunks(prev => prev.map(c => c.id === i ? { ...c, status: 'running' } : c))
+      for (let g = 0; g < totalGroups; g++) {
+        const groupStart = g * GROUP_SIZE
+        const groupEnd = Math.min(groupStart + GROUP_SIZE, totalChunks)
+        const groupChunks = Array.from({ length: groupEnd - groupStart }, (_, k) => groupStart + k)
 
-        const start = i * CHUNK_SIZE
-        const chunkBlocks = assignedBlocks.slice(start, start + CHUNK_SIZE)
+        // Mark this group as running
+        setChunks(prev => prev.map(c => groupChunks.includes(c.id) ? { ...c, status: 'running' } : c))
 
-        try {
-          // Retry up to 3 times on 503 (Supabase rate limit)
-          let res: Response | null = null
-          for (let attempt = 0; attempt < 3; attempt++) {
-            res = await fetch(EDGE_FN_URL, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ blocks: chunkBlocks, retry_attempt: retryAttempt }),
-            })
-            if (res.status !== 503) break
-            await new Promise(r => setTimeout(r, 1500 * (attempt + 1)))  // 1.5s, 3s, 4.5s backoff
+        await Promise.allSettled(groupChunks.map(async (i) => {
+          const start = i * CHUNK_SIZE
+          const chunkBlocks = assignedBlocks.slice(start, start + CHUNK_SIZE)
+
+          try {
+            let res: Response | null = null
+            for (let attempt = 0; attempt < 3; attempt++) {
+              res = await fetch(EDGE_FN_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ blocks: chunkBlocks, retry_attempt: retryAttempt }),
+              })
+              if (res.status !== 503) break
+              await new Promise(r => setTimeout(r, 1500 * (attempt + 1)))
+            }
+            if (!res!.ok) {
+              const errText = await res!.text()
+              throw new Error(`HTTP ${res!.status}: ${errText.substring(0, 80)}`)
+            }
+            const data = await res!.json()
+            if (!data.success || !data.blocks) throw new Error(data.error || 'Invalid response')
+            data.blocks.forEach((block: DebateBlock, j: number) => { allResults2[start + j] = block })
+            setChunks(prev => prev.map(c => c.id === i ? { ...c, status: 'done', formalized: data.total_formalized, skipped: data.total_skipped } : c))
+            setTotalProcessed(prev => prev + chunkBlocks.length)
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err)
+            chunkBlocks.forEach((block, j) => { allResults2[start + j] = { ...block, skip: true, skip_reason: 'agent_error' } })
+            setChunks(prev => prev.map(c => c.id === i ? { ...c, status: 'error', error: errMsg.substring(0, 60) } : c))
+            setTotalProcessed(prev => prev + chunkBlocks.length)
           }
-
-          if (!res!.ok) {
-            const errText = await res!.text()
-            throw new Error(`HTTP ${res!.status}: ${errText.substring(0, 80)}`)
-          }
-
-          const data = await res!.json()
-          if (!data.success || !data.blocks) throw new Error(data.error || 'Invalid response')
-
-          // Store results in correct positions
-          data.blocks.forEach((block: DebateBlock, j: number) => {
-            allResults[start + j] = block
-          })
-
-          setChunks(prev => prev.map(c => c.id === i ? {
-            ...c, status: 'done',
-            formalized: data.total_formalized,
-            skipped: data.total_skipped,
-          } : c))
-
-          setTotalProcessed(prev => prev + chunkBlocks.length)
-
-          return data.blocks.length
-
-        } catch (err) {
-          const errMsg = err instanceof Error ? err.message : String(err)
-          // On agent error: mark blocks as skip — raw text in the acta is worse than omitting
-          // The QA threshold will trigger a retry with higher tolerance
-          chunkBlocks.forEach((block, j) => {
-            allResults[start + j] = { ...block, skip: true, skip_reason: 'agent_error' }
-          })
-
-          setChunks(prev => prev.map(c => c.id === i ? {
-            ...c, status: 'error', error: errMsg.substring(0, 60),
-          } : c))
-
-          setTotalProcessed(prev => prev + chunkBlocks.length)
-          return 0
-        }
-      })
-
-      await Promise.allSettled(chunkPromises)
+        }))
+      }
 
       setDone(true)
-      onComplete(allResults.filter(Boolean))
+      onComplete(allResults2.filter(Boolean))
     }
 
     run().catch(err => setError(err instanceof Error ? err.message : String(err)))

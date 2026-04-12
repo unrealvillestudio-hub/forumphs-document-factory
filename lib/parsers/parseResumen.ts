@@ -96,6 +96,10 @@ export function parseResumen(rawText: string): SkeletonData {
   const fincaM = rawText.match(/[Ff]inca\s+[Nn]úmero\s+([\d\s]+?)(?:,|\.|con|\n)/i)
   const codigoM = rawText.match(/[Cc]ódigo\s+(?:de\s+ubicación\s+)?[Nn]úmero\s+([\d\s]+?)(?:,|\.|de|\n)/i)
 
+  // Extract president and secretary names
+  const presMatch = rawText.match(/[Pp]resident[ae]?[:\s]+([A-ZÁÉÍÓÚÑÜ][a-záéíóúñü]+(?:\s+[A-ZÁÉÍÓÚÑÜ][a-záéíóúñü]+){1,4})/i)
+  const secMatch = rawText.match(/[Ss]ecretari[ao][:\s]+([A-ZÁÉÍÓÚÑÜ][a-záéíóúñü]+(?:\s+[A-ZÁÉÍÓÚÑÜ][a-záéíóúñü]+){1,4})/i)
+
   return {
     ph_name: extractPHName(rawText),
     ph_finca: fincaM ? fincaM[1].trim().replace(/\s+/g, '') : undefined,
@@ -109,7 +113,8 @@ export function parseResumen(rawText: string): SkeletonData {
     present_units: quorum.present || 0,
     quorum_pct: quorum.pct || 0,
     agenda_items: extractAgendaItems(rawText),
+    president_name: presMatch ? presMatch[1].trim() : undefined,
+    secretary_name: secMatch ? secMatch[1].trim() : undefined,
     raw_text: rawText,
   }
 }
-

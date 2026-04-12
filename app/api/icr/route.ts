@@ -85,8 +85,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       ? acta_text.substring(0, inputLimit) + `\n[... auditoria cubre ${coveragePct}% del documento (${inputLimit} de ${acta_text.length} caracteres) ...]`
       : acta_text
 
-    // Scale output tokens: base 2000 + 200 per 5000 chars of input, max 6000
-    const dynamicMaxTokens = Math.min(6000, 2000 + Math.floor(inputLimit / 5000) * 200)
+    // Scale output tokens: base 3500 + 500 per 5000 chars, max 8000
+    const dynamicMaxTokens = Math.min(8000, 3500 + Math.floor(inputLimit / 5000) * 500)
 
     const msg = await client.messages.create({
       model: 'claude-sonnet-4-6',
