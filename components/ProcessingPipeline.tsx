@@ -67,18 +67,24 @@ export default function ProcessingPipeline({ blocks, skeleton, onComplete, retry
         const chunkBlocks = assignedBlocks.slice(start, start + CHUNK_SIZE)
 
         try {
-          const res = await fetch(EDGE_FN_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ blocks: chunkBlocks, retry_attempt: retryAttempt }),
-          })
-
-          if (!res.ok) {
-            const errText = await res.text()
-            throw new Error(`HTTP ${res.status}: ${errText.substring(0, 80)}`)
+          // Retry up to 3 times on 503 (Supabase rate limit / cold start)
+          let res: Response | null = null
+          for (let attempt = 0; attempt < 3; attempt++) {
+            res = await fetch(EDGE_FN_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ blocks: chunkBlocks, retry_attempt: retryAttempt }),
+            })
+            if (res.status !== 503) break
+            await new Promise(r => setTimeout(r, 1500 * (attempt + 1)))  // 1.5s, 3s, 4.5s backoff
           }
 
-          const data = await res.json()
+          if (!res!.ok) {
+            const errText = await res!.text()
+            throw new Error(`HTTP ${res!.status}: ${errText.substring(0, 80)}`)
+          }
+
+          const data = await res!.json()
           if (!data.success || !data.blocks) throw new Error(data.error || 'Invalid response')
 
           // Store results in correct positions
@@ -98,9 +104,10 @@ export default function ProcessingPipeline({ blocks, skeleton, onComplete, retry
 
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err)
-          // Fallback: use text_cleaned/text_raw
+          // On agent error: mark blocks as skip — raw text in the acta is worse than omitting
+          // The QA threshold will trigger a retry with higher tolerance
           chunkBlocks.forEach((block, j) => {
-            allResults[start + j] = { ...block, text_formal: block.text_cleaned || block.text_raw, skip: !(block.text_cleaned || block.text_raw) }
+            allResults[start + j] = { ...block, skip: true, skip_reason: 'agent_error' }
           })
 
           setChunks(prev => prev.map(c => c.id === i ? {
