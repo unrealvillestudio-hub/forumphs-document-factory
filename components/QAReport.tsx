@@ -6,8 +6,11 @@ interface QAReportViewProps {
   report: QAReport
   wordCount: number
   filename: string
-  onDownload: () => void
+  onDownload?: () => void
   onRegenerate: () => void
+  showDownload?: boolean
+  onContinue?: () => void
+  continueLabel?: string
 }
 
 const ERROR_LABELS: Record<string, string> = {
@@ -21,7 +24,7 @@ const ERROR_LABELS: Record<string, string> = {
   GENDER_MISMATCH: 'Género incorrecto',
 }
 
-export default function QAReportView({ report, wordCount, filename, onDownload, onRegenerate }: QAReportViewProps) {
+export default function QAReportView({ report, wordCount, filename, onDownload, onRegenerate, showDownload, onContinue, continueLabel }: QAReportViewProps) {
   const verdictColor = {
     PASS: '#4ADE80',
     WARN: '#FBBF24',
@@ -274,9 +277,11 @@ export default function QAReportView({ report, wordCount, filename, onDownload, 
 
       {/* Actions */}
       <div style={{ display: 'flex', gap: 12 }}>
-        <button className="df-btn-primary" onClick={onDownload} style={{ padding: '12px 32px', fontSize: 15 }}>
-          ⬇ Descargar .docx
-        </button>
+        {onContinue && (
+          <button className="df-btn-primary" onClick={onContinue} style={{ padding: '12px 32px', fontSize: 15 }}>
+            {continueLabel || 'Continuar'}
+          </button>
+        )}
         <button className="df-btn-ghost" onClick={onRegenerate}>
           ↺ Regenerar
         </button>
