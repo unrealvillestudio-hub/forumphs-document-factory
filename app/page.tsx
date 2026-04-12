@@ -48,7 +48,7 @@ export default function Home() {
   const [icrReport, setIcrReport] = useState<ICRReport | null>(null)
   const [icrLoading, setIcrLoading] = useState(false)
   const autoRetryRef = useRef(0)
-  const MAX_AUTO_RETRIES = 2
+  const MAX_AUTO_RETRIES = 3
   const [error, setError] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
   const [jobId, setJobId] = useState<string | null>(null)

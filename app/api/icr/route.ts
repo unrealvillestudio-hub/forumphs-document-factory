@@ -72,9 +72,25 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       `"${v.topic}": ${v.yes_votes} sí / ${v.no_votes} no → ${v.approved ? 'APROBADO' : 'NO APROBADO'}`
     ).join('\n')
 
+    // Dynamic coverage: always audit at least 60% of the document
+    const TARGET_COVERAGE = 0.60
+    const MAX_INPUT_CHARS = 15000   // ~12k tokens input, safe for claude-sonnet-4-6
+    const MIN_INPUT_CHARS = 5000
+
+    const coverageChars = Math.floor(acta_text.length * TARGET_COVERAGE)
+    const inputLimit = Math.max(MIN_INPUT_CHARS, Math.min(coverageChars, MAX_INPUT_CHARS))
+    const coveragePct = Math.round((inputLimit / acta_text.length) * 100)
+
+    const actaTruncated = acta_text.length > inputLimit
+      ? acta_text.substring(0, inputLimit) + `\n[... auditoria cubre ${coveragePct}% del documento (${inputLimit} de ${acta_text.length} caracteres) ...]`
+      : acta_text
+
+    // Scale output tokens: base 2000 + 200 per 5000 chars of input, max 6000
+    const dynamicMaxTokens = Math.min(6000, 2000 + Math.floor(inputLimit / 5000) * 200)
+
     const msg = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 2000,
+      max_tokens: dynamicMaxTokens,
       system: ICR_SYSTEM,
       messages: [{
         role: 'user',
@@ -86,7 +102,7 @@ Personal de administración (NO propietarios): Ivette Flores, Iveth, Irja Salda�
 
 ACTA GENERADA A AUDITAR:
 ---
-${acta_text.substring(0, 11000)}${acta_text.length > 11000 ? '\n[documento truncado]' : ''}
+${actaTruncated}
 ---
 
 Responde SOLO con este JSON:
