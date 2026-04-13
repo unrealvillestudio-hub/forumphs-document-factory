@@ -122,7 +122,7 @@ export default function ICRResolution({
     if (action !== 'edit') setEditingId(null);
   }
 
-  function startEdit(finding: ICRFinding) {
+  function startEdit(finding: NormalizedFinding) {
     const existing = decisions[finding.id]?.editedInstruction;
     setEditText(existing || finding.suggestion);
     setEditingId(finding.id);
