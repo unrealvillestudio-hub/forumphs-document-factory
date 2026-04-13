@@ -106,6 +106,7 @@ export default function Home() {
         ph_finca: pf.finca || parsed.skeleton.ph_finca,
         ph_codigo: pf.codigo || parsed.skeleton.ph_codigo,
         present_units: pf.confirmed_present_units || parsed.skeleton.present_units,
+        total_units: (answers.total_units as number) || parsed.skeleton.total_units,  // ← fix
         time_end: pf.confirmed_time_end || parsed.skeleton.time_end,
       },
     }
