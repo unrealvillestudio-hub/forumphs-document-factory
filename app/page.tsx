@@ -48,6 +48,7 @@ export default function Home() {
   const [icrReport, setIcrReport] = useState<ICRReport | null>(null)
   const [icrLoading, setIcrLoading] = useState(false)
   const autoRetryRef = useRef(0)
+  const [offerRetryBanner, setOfferRetryBanner] = useState(false)
   const MAX_AUTO_RETRIES = 3
   const [error, setError] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
@@ -156,7 +157,8 @@ export default function Home() {
       const qaReport = data.qa_report
       const formalizedPct = qaReport?.formalized_pct ?? 0
       const estimatedPages = Math.round((data.word_count || 0) / 500)
-      const needsRetry = (formalizedPct < 70 && estimatedPages < 22) && autoRetryRef.current < MAX_AUTO_RETRIES
+      const needsRetry = (formalizedPct < 60 && estimatedPages < 22) && autoRetryRef.current < MAX_AUTO_RETRIES
+      const offerRetry = !needsRetry && formalizedPct >= 60 && formalizedPct < 70 && autoRetryRef.current < MAX_AUTO_RETRIES
 
       setOutput({
         docx_base64: data.docx_base64,
@@ -175,6 +177,8 @@ export default function Home() {
         setStep('formalizing')
         return
       }
+      // Check if we should offer manual retry at 60-70%
+      if (offerRetry) setOfferRetryBanner(true)
       // Max retries reached or threshold met — proceed to QA
       setStep('qa')
       // ICR is triggered manually by user clicking "Continuar → ICR"
@@ -372,6 +376,37 @@ export default function Home() {
         {/* QA step */}
         {(step === 'qa' || step === 'icr' || step === 'done') && output && (
           <>
+            {/* Offer manual retry at 60-70% coverage */}
+            {step === 'qa' && offerRetryBanner && (
+              <div style={{
+                background: 'rgba(92,52,114,0.08)', border: '1px solid rgba(92,52,114,0.25)',
+                borderRadius: 10, padding: '14px 20px', marginBottom: 16,
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16,
+              }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--amatista-light)', marginBottom: 3 }}>
+                    ℹ Cobertura al {output.qa_report?.formalized_pct ?? 0}% — ¿deseas mejorarla?
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--parch-dim)' }}>
+                    Un segundo barrido con +10% de tolerancia podría incluir más intervenciones. El acta actual es válida.
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
+                  <button
+                    style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--amatista)', color: '#fff', fontSize: 12, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif', fontWeight: 600 }}
+                    onClick={() => { setOfferRetryBanner(false); autoRetryRef.current += 1; setFormalizedBlocks([]); setStep('formalizing') }}
+                  >
+                    Sí, segundo barrido
+                  </button>
+                  <button
+                    style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid rgba(200,196,190,0.15)', background: 'transparent', color: 'var(--parch-dim)', fontSize: 12, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif' }}
+                    onClick={() => setOfferRetryBanner(false)}
+                  >
+                    No, continuar
+                  </button>
+                </div>
+              </div>
+            )}
             {/* Retry exhausted warning */}
             {step === 'qa' && autoRetryRef.current >= MAX_AUTO_RETRIES && (output.qa_report?.formalized_pct ?? 0) < 70 && (
               <div style={{
@@ -438,14 +473,27 @@ export default function Home() {
           </div>
         )}
 
-        {/* Download step — available from ICR step onwards */}
+        {/* Download — disabled while ICR loading, enabled on done */}
         {(step === 'icr' || step === 'done') && output && (
-          <div style={{ marginTop: 24, display: 'flex', gap: 12 }}>
-            <button className="df-btn-primary" onClick={handleDownload} style={{ padding: '12px 32px', fontSize: 15 }}>
-              ⬇ Descargar .docx
-            </button>
-            {step === 'done' && (
-              <button className="df-btn-ghost" onClick={handleReset}>↺ Nueva acta</button>
+          <div style={{ marginTop: 24, display: 'flex', gap: 12, alignItems: 'center' }}>
+            {icrLoading ? (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '12px 24px', borderRadius: 10,
+                background: 'rgba(92,52,114,0.1)', border: '1px solid rgba(92,52,114,0.25)',
+              }}>
+                <div style={{ width: 18, height: 18, border: '2px solid rgba(92,52,114,0.3)', borderTop: '2px solid var(--amatista)', borderRadius: '50%', animation: 'spin-slow 1s linear infinite' }} />
+                <span style={{ color: 'var(--amatista-light)', fontSize: 14 }}>ICR auditando el documento — disponible al terminar…</span>
+              </div>
+            ) : (
+              <>
+                <button className="df-btn-primary" onClick={handleDownload} style={{ padding: '12px 32px', fontSize: 15 }}>
+                  ⬇ Descargar .docx
+                </button>
+                {step === 'done' && (
+                  <button className="df-btn-ghost" onClick={handleReset}>↺ Nueva acta</button>
+                )}
+              </>
             )}
           </div>
         )}
