@@ -5,12 +5,18 @@ import { useState } from 'react';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface ICRFinding {
-  id: string;
+  id?: string;            // optional — generated from index if missing
   severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
   category: string;       // e.g. "⚖ Cumplimiento legal"
-  section: string;        // e.g. "Sección 1. VERIFICACIÓN DEL QUORUM"
+  section?: string;       // optional — hidden if missing
   issue: string;
   suggestion: string;
+}
+
+// Internal normalized type — always has id and section
+interface NormalizedFinding extends ICRFinding {
+  id: string;
+  section: string;
 }
 
 export interface ProcessedBlock {
@@ -91,7 +97,14 @@ export default function ICRResolution({
   const [isApplying, setIsApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const sorted = [...findings].sort(
+  // Normalize: ensure every finding has id and section
+  const normalized: NormalizedFinding[] = findings.map((f, i) => ({
+    ...f,
+    id: f.id || `finding_${i}`,
+    section: f.section || '',
+  }));
+
+  const sorted = [...normalized].sort(
     (a, b) => SEV[a.severity].order - SEV[b.severity].order
   );
 
@@ -99,8 +112,8 @@ export default function ICRResolution({
   const toApply = Object.values(decisions).filter(
     (d) => d.action === 'apply' || d.action === 'edit'
   ).length;
-  const canProceed = decided === findings.length;
-  const progress = findings.length > 0 ? (decided / findings.length) * 100 : 0;
+  const canProceed = decided === normalized.length;
+  const progress = normalized.length > 0 ? (decided / normalized.length) * 100 : 0;
 
   // ─── Handlers ──────────────────────────────────────────────────────────────
 
@@ -126,14 +139,14 @@ export default function ICRResolution({
 
   function applyAll() {
     const all: Record<string, DecisionState> = {};
-    findings.forEach((f) => { all[f.id] = { action: 'apply' }; });
+    normalized.forEach((f) => { all[f.id] = { action: 'apply' }; });
     setDecisions(all);
     setEditingId(null);
   }
 
   function ignoreAll() {
     const all: Record<string, DecisionState> = {};
-    findings.forEach((f) => { all[f.id] = { action: 'ignore' }; });
+    normalized.forEach((f) => { all[f.id] = { action: 'ignore' }; });
     setDecisions(all);
     setEditingId(null);
   }
@@ -142,7 +155,7 @@ export default function ICRResolution({
     setIsApplying(true);
     setError(null);
 
-    const decisionsList: ICRDecision[] = findings.map((f) => {
+    const decisionsList: ICRDecision[] = normalized.map((f) => {
       const d = decisions[f.id];
       if (!d || !d.action || d.action === 'ignore') {
         return { finding_id: f.id, action: 'ignore' as const };
@@ -158,7 +171,7 @@ export default function ICRResolution({
       const res = await fetch('/api/icr-apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ blocks, findings, decisions: decisionsList }),
+        body: JSON.stringify({ blocks, findings: normalized, decisions: decisionsList }),
       });
 
       if (!res.ok) throw new Error(`Error ${res.status} — ${res.statusText}`);
@@ -196,7 +209,7 @@ export default function ICRResolution({
 
         {/* Stats row */}
         <div className="flex items-center gap-3 mb-3 text-sm">
-          <span className="text-gray-500">{decided}/{findings.length} revisados</span>
+          <span className="text-gray-500">{decided}/{normalized.length} revisados</span>
           <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
             <div
               className="h-full bg-[#00FFD1] rounded-full transition-all duration-300"
@@ -355,7 +368,7 @@ export default function ICRResolution({
             <div className="text-sm text-gray-500 flex-1">
               {!canProceed ? (
                 <span className="text-amber-600">
-                  {findings.length - decided} hallazgo{findings.length - decided !== 1 ? 's' : ''} sin revisar
+                  {normalized.length - decided} hallazgo{normalized.length - decided !== 1 ? 's' : ''} sin revisar
                 </span>
               ) : toApply > 0 ? (
                 <span>
