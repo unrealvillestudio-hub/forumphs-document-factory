@@ -419,7 +419,7 @@ export default function Home() {
       {/* ── Footer — BP_BRAND_UNRLVL_v1.2 · 3-col · border-top 2px #00FFD1 ── */}
       <footer style={{
         position: 'fixed', bottom: 0, left: 0, right: 0,
-        borderTop: '2px solid #00FFD1', background: 'rgba(28,34,51,0.98)',
+        borderTop: '2px solid #00FFD1', background: '#0F0F0F',
         padding: '10px 32px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
         alignItems: 'center', gap: '1rem', backdropFilter: 'blur(12px)',
       }}>

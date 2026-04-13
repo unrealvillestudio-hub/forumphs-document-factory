@@ -11,7 +11,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { ParsedHypalZip } from '@/lib/types'
 
 export const runtime = 'nodejs'
-export const maxDuration = 55
+export const maxDuration = 120
 
 export interface ICRFinding {
   severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'

@@ -13,7 +13,8 @@ interface ICRFinding {
   id?: string
   severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
   category?: string
-  section?: string
+  location: string   // canonical field name per /api/icr/route.ts
+  section?: string   // alias — tolerated if present
   issue?: string
   suggestion?: string
 }
@@ -36,11 +37,10 @@ function getWorstSev(findings: ICRFinding[]): string {
 
 function findingsForSection(findings: ICRFinding[], sectionNum: number): ICRFinding[] {
   return findings.filter(f => {
-    if (!f.section) return false
-    const lower = f.section.toLowerCase()
-    return lower.includes(`sección ${sectionNum}`) ||
-           lower.includes(`seccion ${sectionNum}`) ||
-           lower.includes(`section ${sectionNum}`)
+    const ref = (f.location || f.section || '').toLowerCase()
+    return ref.includes(`sección ${sectionNum}`) ||
+           ref.includes(`seccion ${sectionNum}`) ||
+           ref.includes(`section ${sectionNum}`)
   })
 }
 
@@ -182,11 +182,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     // ── INTRO ─────────────────────────────────────────────────────────────────
     // Header-level ICR findings banner (encabezado)
     if (icrFindings.length > 0) {
-      const headerFindings = icrFindings.filter(f =>
-        f.section?.toLowerCase().includes('encabezado') ||
-        f.section?.toLowerCase().includes('título') ||
-        f.section?.toLowerCase().includes('header')
-      )
+      const headerFindings = icrFindings.filter(f => {
+        const ref = (f.location || f.section || '').toLowerCase()
+        return ref.includes('encabezado') || ref.includes('título') || ref.includes('header')
+      })
       const banner = icrSectionBanner(headerFindings)
       if (banner) docChildren.push(banner)
     }
@@ -439,9 +438,9 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
                   ],
                   spacing: { before: 140, after: 60 },
                 }),
-                // Section ref
+                // Location ref
                 new Paragraph({
-                  children: [new TextRun({ text: finding.section || '', size: 17, font: TNR, color: '666666', italics: true })],
+                  children: [new TextRun({ text: finding.location || finding.section || '', size: 17, font: TNR, color: '666666', italics: true })],
                   spacing: { before: 0, after: 100 },
                 }),
                 // Issue

@@ -5,10 +5,11 @@ import { useState } from 'react';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface ICRFinding {
-  id?: string;            // optional — generated from index if missing
+  id?: string;
   severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
-  category: string;       // e.g. "⚖ Cumplimiento legal"
-  section?: string;       // optional — hidden if missing
+  category: string;
+  location: string;   // canonical — matches /api/icr/route.ts
+  section?: string;   // alias tolerated
   issue: string;
   suggestion: string;
 }
@@ -278,8 +279,8 @@ export default function ICRResolution({
                 )}
               </div>
 
-              {/* Section ref */}
-              <p className="text-xs font-mono text-gray-400 mb-1.5">{finding.section}</p>
+              {/* Location ref */}
+              <p className="text-xs font-mono text-gray-400 mb-1.5">{finding.location || finding.section || ''}</p>
 
               {/* Issue */}
               <p className="text-sm text-gray-700 leading-relaxed mb-3">{finding.issue}</p>
