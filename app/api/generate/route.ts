@@ -1,22 +1,50 @@
 /**
- * /api/generate/route.ts — v2
- * Full DOCX generation with all fixes:
- * - OR/EX nomenclature in filename
- * - Section assigner applied before building
- * - Informe de Gestión inserted as dedicated section
- * - Vote-to-section semantic linking
- * - First call without quorum detection
- * - Document footer
- * - QA v2 completeness score
+ * /api/generate/route.ts — v3
+ * DOCX generation + ICR annotations (inline banners + annex page)
  */
-
 import { NextRequest, NextResponse } from 'next/server'
 import type { GenerateResponse, ParsedHypalZip, PreflightData, DebateBlock, VotationRecord } from '@/lib/types'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
 
-// ---- Vote-to-section matcher ----
+// ── ICR types (local — mirrors lib/types ICRFinding) ─────────────────────────
+interface ICRFinding {
+  id?: string
+  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
+  category?: string
+  section?: string
+  issue?: string
+  suggestion?: string
+}
+
+// ── ICR severity config ───────────────────────────────────────────────────────
+const SEV_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const
+const ICR_COLORS: Record<string, { bg: string; accent: string; label: string }> = {
+  CRITICAL: { bg: 'FFD7D7', accent: 'FF4444', label: '⚠  CRÍTICO' },
+  HIGH:     { bg: 'FFDDB3', accent: 'FF8C00', label: '▲  ALTO'    },
+  MEDIUM:   { bg: 'FFF5CC', accent: 'FFC107', label: '●  MEDIO'   },
+  LOW:      { bg: 'D6EEFF', accent: '4FC3F7', label: '○  BAJO'    },
+}
+
+function getWorstSev(findings: ICRFinding[]): string {
+  for (const s of SEV_ORDER) {
+    if (findings.some(f => f.severity === s)) return s
+  }
+  return 'LOW'
+}
+
+function findingsForSection(findings: ICRFinding[], sectionNum: number): ICRFinding[] {
+  return findings.filter(f => {
+    if (!f.section) return false
+    const lower = f.section.toLowerCase()
+    return lower.includes(`sección ${sectionNum}`) ||
+           lower.includes(`seccion ${sectionNum}`) ||
+           lower.includes(`section ${sectionNum}`)
+  })
+}
+
+// ── Vote-to-section matcher ───────────────────────────────────────────────────
 function matchVoteToSection(vote: VotationRecord, agendaItems: { number: number; title: string }[]): number {
   if (agendaItems.length === 0) return 2
   const voteWords = new Set(
@@ -34,49 +62,51 @@ function matchVoteToSection(vote: VotationRecord, agendaItems: { number: number;
   return best
 }
 
-// ---- First-call-without-quorum detector ----
+// ── First-call-without-quorum detector ───────────────────────────────────────
 function detectFirstCallNoQuorum(rawTranscription: string): boolean {
   return /primer\s+llamado|no\s+(?:se\s+)?alcanz[oó].*quór?um|segundo\s+llamado|falta.*quór?um/i.test(rawTranscription)
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse<GenerateResponse>> {
   try {
+    const body = await req.json()
     const { parsed, preflight, formalizedBlocks }: {
       parsed: ParsedHypalZip
       preflight: PreflightData
       formalizedBlocks: DebateBlock[]
-    } = await req.json()
+    } = body
+
+    // ICR findings (optional — present when downloading annotated version)
+    const icrFindings: ICRFinding[] = body.icr_findings || []
 
     const {
       Document, Paragraph, TextRun, Table, TableRow, TableCell,
       AlignmentType, WidthType, BorderStyle, Packer, UnderlineType, Footer,
+      ShadingType,
     } = await import('docx')
-
     const { assignBlocksToSections } = await import('@/lib/processors/sectionAssigner')
-    const { buildActaText } = await import('@/lib/generators/actaBuilder')
-    const { runQAScan } = await import('@/lib/processors/qaScanner')
+    const { buildActaText }          = await import('@/lib/generators/actaBuilder')
+    const { runQAScan }              = await import('@/lib/processors/qaScanner')
 
-    const s = parsed.skeleton
-    const phName = s.ph_name || 'PH'
-    const actaNum = s.acta_number || '1'
-    const year = new Date().getFullYear()
-    const typeLabel = s.assembly_type === 'EXTRAORDINARIA' ? 'ASAMBLEA EXTRAORDINARIA' : 'ASAMBLEA ORDINARIA'
-    const typeCode = s.assembly_type === 'EXTRAORDINARIA' ? 'EX' : 'OR'
-    const finca = preflight.finca || s.ph_finca || '[FINCA PENDIENTE]'
-    const codigo = preflight.codigo || s.ph_codigo || '[CÓDIGO PENDIENTE]'
+    const s          = parsed.skeleton
+    const phName     = s.ph_name || 'PH'
+    const actaNum    = s.acta_number || '1'
+    const year       = new Date().getFullYear()
+    const typeLabel  = s.assembly_type === 'EXTRAORDINARIA' ? 'ASAMBLEA EXTRAORDINARIA' : 'ASAMBLEA ORDINARIA'
+    const typeCode   = s.assembly_type === 'EXTRAORDINARIA' ? 'EX' : 'OR'
+    const finca      = preflight.finca || s.ph_finca || '[FINCA PENDIENTE]'
+    const codigo     = preflight.codigo || s.ph_codigo || '[CÓDIGO PENDIENTE]'
     const presentUnits = preflight.confirmed_present_units ?? s.present_units ?? parsed.attendance.length
-    const totalUnits = s.total_units || 0
-    const timeEnd = preflight.confirmed_time_end || s.time_end || '[HORA FIN]'
+    const totalUnits   = s.total_units || 0
+    const timeEnd      = preflight.confirmed_time_end || s.time_end || '[HORA FIN]'
 
-    // Apply section assigner to formalized blocks
     const assignedBlocks = assignBlocksToSections(formalizedBlocks, s.agenda_items)
-
-    // Detect first call without quorum
     const hasFirstCallNoQuorum = detectFirstCallNoQuorum(parsed.raw_files['transcripcion'] || '')
 
-    // ---- Markdown inline bold parser ----
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    const TNR = 'Times New Roman'
+
     function mdRuns(text: string, size = 22, italic = false) {
-      // Parse **bold** markers into bold TextRuns
       const parts = text.split(/(\*\*[^*]+\*\*)/)
       return parts.map(part => {
         if (part.startsWith('**') && part.endsWith('**')) {
@@ -85,9 +115,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         return new TextRun({ text: part, size, font: TNR, italics: italic })
       }).filter(r => (r as any).options?.text !== '')
     }
-
-    // ---- Helpers ----
-    const TNR = 'Times New Roman'
 
     const normal = (text: string, opts: { bold?: boolean; italic?: boolean; indent?: boolean; before?: number } = {}) =>
       new Paragraph({
@@ -117,10 +144,25 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
 
     const emptyLine = () => new Paragraph({ children: [new TextRun({ text: '', size: 22, font: TNR })] })
 
+    // ── ICR inline banner helper ──────────────────────────────────────────────
+    const icrSectionBanner = (sFindings: ICRFinding[]) => {
+      if (sFindings.length === 0) return null
+      const worst = getWorstSev(sFindings)
+      const col = ICR_COLORS[worst]
+      return new Paragraph({
+        shading: { type: ShadingType.CLEAR, fill: col.bg, color: col.bg },
+        children: [new TextRun({
+          text: `${col.label}  ·  ${sFindings.length} hallazgo${sFindings.length > 1 ? 's' : ''} ICR en esta sección  —  ver Anexo ICR al final del documento`,
+          size: 18, font: TNR, color: '333333',
+        })],
+        spacing: { before: 0, after: 160 },
+      })
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const docChildren: any[] = []
 
-    // === TITLE ===
+    // ── TITLE ─────────────────────────────────────────────────────────────────
     docChildren.push(new Paragraph({
       children: [new TextRun({ text: `ACTA No_${actaNum}-${year}`, bold: true, underline: { type: UnderlineType.SINGLE }, size: 28, font: TNR })],
       alignment: AlignmentType.CENTER,
@@ -137,7 +179,18 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       spacing: { after: 360 },
     }))
 
-    // === INTRO ===
+    // ── INTRO ─────────────────────────────────────────────────────────────────
+    // Header-level ICR findings banner (encabezado)
+    if (icrFindings.length > 0) {
+      const headerFindings = icrFindings.filter(f =>
+        f.section?.toLowerCase().includes('encabezado') ||
+        f.section?.toLowerCase().includes('título') ||
+        f.section?.toLowerCase().includes('header')
+      )
+      const banner = icrSectionBanner(headerFindings)
+      if (banner) docChildren.push(banner)
+    }
+
     docChildren.push(normal(
       `En la ciudad de Panamá, siendo las ${s.time_start} del ${s.date_str}, ` +
       `se reunieron previa convocatoria los copropietarios del ${phName}, debidamente inscrito ` +
@@ -145,29 +198,32 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       `Propiedad Horizontal del Registro Público, conforme a la Ley No. 284 de 14 de febrero ` +
       `de 2022 de Propiedad Horizontal, mediante reunión virtual.`
     ))
-
     if (preflight.convocatoria_text) {
       docChildren.push(normal('A fin de celebrar esta Asamblea se convocó a los propietarios conforme al siguiente aviso:'))
       docChildren.push(normal(preflight.convocatoria_text, { italic: true, indent: true }))
     }
     docChildren.push(emptyLine())
 
-    // === SECTION 1: QUORUM ===
+    // ── SECTION 1: QUORUM ─────────────────────────────────────────────────────
     docChildren.push(sectionTitle(1, 'VERIFICACIÓN DEL QUORUM'))
 
-    const pct = totalUnits > 0 ? ((presentUnits / totalUnits) * 100).toFixed(2) : '0'
+    // ICR banner for section 1
+    if (icrFindings.length > 0) {
+      const s1findings = findingsForSection(icrFindings, 1)
+      const banner = icrSectionBanner(s1findings)
+      if (banner) docChildren.push(banner)
+    }
+
+    const pct      = totalUnits > 0 ? ((presentUnits / totalUnits) * 100).toFixed(2) : '0'
     const minQuorum = Math.floor(totalUnits / 2) + 1
 
-    // First call without quorum (if detected)
     if (hasFirstCallNoQuorum) {
       docChildren.push(normal(
         `Siendo las ${s.time_start}, se realizó el primer llamado para dar inicio a la Asamblea, ` +
         `verificándose que no se contaba con el quórum requerido de ${minQuorum} unidades. ` +
-        `En consecuencia, conforme al artículo 67 de la Ley 284 de 2022, se procedió a realizar ` +
-        `un segundo llamado.`
+        `En consecuencia, conforme al artículo 67 de la Ley 284 de 2022, se procedió a realizar un segundo llamado.`
       ))
     }
-
     docChildren.push(normal(
       `${hasFirstCallNoQuorum ? 'En el segundo llamado, la' : 'La'} administración procedió a validar el quórum, ` +
       `encontrándose presentes o debidamente representadas ${presentUnits} unidades inmobiliarias ` +
@@ -177,9 +233,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     ))
 
     if (parsed.attendance.length > 0) {
-      docChildren.push(normal(
-        `Se encontraban presentes o debidamente representadas ${presentUnits} unidades inmobiliarias, a saber:`
-      ))
+      docChildren.push(normal(`Se encontraban presentes o debidamente representadas ${presentUnits} unidades inmobiliarias, a saber:`))
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const tableRows: any[] = [
         new TableRow({
@@ -202,29 +256,29 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       ]
       docChildren.push(new Table({
         rows: tableRows,
-        width: { size: 9360, type: WidthType.DXA },  // full page width in twips
-        columnWidths: [1800, 4500, 3060],  // Unit | Owner | Represented — in twips
+        width: { size: 9360, type: WidthType.DXA },
+        columnWidths: [1800, 4500, 3060],
       }))
       docChildren.push(emptyLine())
     }
 
-    // === INFORME DE GESTIÓN (if provided) ===
+    // ── INFORME DE GESTIÓN ────────────────────────────────────────────────────
     if (preflight.has_informe_gestion && preflight.informe_gestion_text) {
       const informeSectionNum = 2
       docChildren.push(sectionTitle(informeSectionNum, 'INFORME DE GESTIÓN DE LA JUNTA DIRECTIVA'))
-      const paragrphs = preflight.informe_gestion_text.split(/\n+/).filter(p => p.trim().length > 10)
-      for (const p of paragrphs) {
-        docChildren.push(normal(p, { before: 200 }))
+      if (icrFindings.length > 0) {
+        const banner = icrSectionBanner(findingsForSection(icrFindings, informeSectionNum))
+        if (banner) docChildren.push(banner)
       }
+      const paragrphs = preflight.informe_gestion_text.split(/\n+/).filter(p => p.trim().length > 10)
+      for (const p of paragrphs) docChildren.push(normal(p, { before: 200 }))
       docChildren.push(emptyLine())
     }
 
-    // === AGENDA SECTIONS ===
-    const agendaItems = s.agenda_items.length > 0 ? s.agenda_items : []
-    // Offset section numbers if informe was inserted
+    // ── AGENDA SECTIONS ───────────────────────────────────────────────────────
+    const agendaItems   = s.agenda_items.length > 0 ? s.agenda_items : []
     const sectionOffset = (preflight.has_informe_gestion && preflight.informe_gestion_text) ? 1 : 0
 
-    // Build vote map by section (semantic matching)
     const votesBySectionMap = new Map<number, VotationRecord[]>()
     for (const vote of parsed.votations) {
       const sectionNum = matchVoteToSection(vote, s.agenda_items)
@@ -237,12 +291,16 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         const displayNum = item.number + sectionOffset
         docChildren.push(sectionTitle(displayNum, item.title.toUpperCase()))
 
+        // ICR inline banner for this agenda section
+        if (icrFindings.length > 0) {
+          const banner = icrSectionBanner(findingsForSection(icrFindings, item.number))
+          if (banner) docChildren.push(banner)
+        }
+
         const sectionBlocks = assignedBlocks.filter(
           b => b.agenda_section === item.number && !b.skip && b.text_formal
         )
-
         if (sectionBlocks.length === 0 && item === agendaItems[0]) {
-          // First section gets all unassigned blocks
           const unassigned = assignedBlocks.filter(b => !b.skip && b.text_formal && !b.agenda_section)
           for (const block of unassigned) {
             if (block.text_formal) docChildren.push(normal(block.text_formal, { before: 200 }))
@@ -253,12 +311,9 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
           }
         }
 
-        // Add votes for this section
         const sectionVotes = votesBySectionMap.get(item.number) || []
         for (const vote of sectionVotes) {
-          docChildren.push(normal(
-            `Se sometió a votación ${vote.topic}. Los resultados fueron los siguientes:`
-          ))
+          docChildren.push(normal(`Se sometió a votación ${vote.topic}. Los resultados fueron los siguientes:`))
           docChildren.push(normal(`${vote.yes_votes} votos a favor`, { indent: true }))
           docChildren.push(normal(`${vote.no_votes} votos en contra`, { indent: true }))
           if (vote.abstentions) docChildren.push(normal(`${vote.abstentions} abstenciones`, { indent: true }))
@@ -272,8 +327,11 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         docChildren.push(emptyLine())
       }
     } else {
-      // No agenda items — one block with everything
       docChildren.push(sectionTitle(2 + sectionOffset, 'DESARROLLO DE LA ASAMBLEA'))
+      if (icrFindings.length > 0) {
+        const banner = icrSectionBanner(findingsForSection(icrFindings, 2))
+        if (banner) docChildren.push(banner)
+      }
       for (const block of assignedBlocks.filter(b => !b.skip && b.text_formal)) {
         if (block.text_formal) docChildren.push(normal(block.text_formal, { before: 200 }))
       }
@@ -289,7 +347,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       }
     }
 
-    // === CLOSING ===
+    // ── CLOSING ───────────────────────────────────────────────────────────────
     docChildren.push(normal(
       `Siendo, el ${s.date_str} a las ${timeEnd}, damos por terminada la sesión de la ` +
       `${typeLabel} de Propietarios.`
@@ -301,41 +359,114 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     docChildren.push(emptyLine())
     docChildren.push(emptyLine())
 
-    // Signature block — 2 columns only
+    // Signature block
     const presName = s.president_name?.toUpperCase() || '[NOMBRE PRESIDENTE/A]'
-    const secName = s.secretary_name?.toUpperCase() || '[NOMBRE SECRETARIO/A]'
-    const LINE = '_'.repeat(46)
-    const NB = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }
+    const secName  = s.secretary_name?.toUpperCase()  || '[NOMBRE SECRETARIO/A]'
+    const LINE     = '_'.repeat(46)
+    const NB       = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }
     const NO_BORDERS = { top: NB, bottom: NB, left: NB, right: NB }
 
     const sigRow = (left: string, right: string, bold = false) => new TableRow({
       children: [
         new TableCell({
           children: [new Paragraph({ children: [new TextRun({ text: left, bold, size: 22, font: TNR })] })],
-          borders: NO_BORDERS,
-          width: { size: 4680, type: WidthType.DXA },
+          borders: NO_BORDERS, width: { size: 4680, type: WidthType.DXA },
         }),
         new TableCell({
           children: [new Paragraph({ children: [new TextRun({ text: right, bold, size: 22, font: TNR })] })],
-          borders: NO_BORDERS,
-          width: { size: 4680, type: WidthType.DXA },
+          borders: NO_BORDERS, width: { size: 4680, type: WidthType.DXA },
         }),
       ],
     })
-
     docChildren.push(new Table({
-      rows: [
-        sigRow(LINE, LINE),
-        sigRow(presName, secName, true),
-        sigRow('PRESIDENTE/A', 'SECRETARIO/A', true),
-      ],
+      rows: [sigRow(LINE, LINE), sigRow(presName, secName, true), sigRow('PRESIDENTE/A', 'SECRETARIO/A', true)],
       width: { size: 9360, type: WidthType.DXA },
       columnWidths: [4680, 4680],
     }))
 
-    // === BUILD DOC ===
+    // ── ICR ANNEX (only when icr_findings provided) ───────────────────────────
+    if (icrFindings.length > 0) {
+      // Page break
+      docChildren.push(new Paragraph({
+        children: [new TextRun({ text: '', size: 22, font: TNR })],
+        pageBreakBefore: true,
+        spacing: { before: 0, after: 0 },
+      }))
+
+      // Annex header
+      docChildren.push(new Paragraph({
+        children: [new TextRun({
+          text: 'ANEXO ICR — REVISIÓN DE CONSISTENCIA LEGAL',
+          bold: true, underline: { type: UnderlineType.SINGLE }, size: 26, font: TNR,
+        })],
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 0, after: 120 },
+      }))
+      docChildren.push(new Paragraph({
+        children: [new TextRun({
+          text: `ForumPHs Document Factory  ·  ${icrFindings.length} hallazgo${icrFindings.length > 1 ? 's' : ''} detectados  ·  Para uso interno — no forma parte del acta oficial`,
+          size: 17, font: TNR, color: '888888', italics: true,
+        })],
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 0, after: 400 },
+      }))
+
+      // Finding cards — sorted by severity
+      const sortedFindings = [...icrFindings].sort(
+        (a, b) => SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity)
+      )
+
+      for (const finding of sortedFindings) {
+        const col = ICR_COLORS[finding.severity] || ICR_COLORS.LOW
+        const noBorder = { style: BorderStyle.NONE, size: 0, color: 'auto' }
+
+        docChildren.push(new Table({
+          rows: [new TableRow({
+            children: [new TableCell({
+              shading: { type: ShadingType.CLEAR, fill: col.bg, color: col.bg },
+              borders: {
+                left:   { style: BorderStyle.THICK, size: 12, color: col.accent },
+                top:    noBorder,
+                bottom: noBorder,
+                right:  noBorder,
+              },
+              children: [
+                // Severity + category
+                new Paragraph({
+                  children: [
+                    new TextRun({ text: col.label + '  ·  ', bold: true, size: 20, font: TNR, color: '111111' }),
+                    new TextRun({ text: finding.category || '', bold: true, size: 20, font: TNR, color: '333333' }),
+                  ],
+                  spacing: { before: 140, after: 60 },
+                }),
+                // Section ref
+                new Paragraph({
+                  children: [new TextRun({ text: finding.section || '', size: 17, font: TNR, color: '666666', italics: true })],
+                  spacing: { before: 0, after: 100 },
+                }),
+                // Issue
+                new Paragraph({
+                  children: [new TextRun({ text: finding.issue || '', size: 20, font: TNR, color: '111111' })],
+                  spacing: { before: 0, after: 100 },
+                }),
+                // Suggestion
+                new Paragraph({
+                  children: [new TextRun({ text: '→  ' + (finding.suggestion || ''), size: 18, font: TNR, color: '444444' })],
+                  spacing: { before: 0, after: 140 },
+                }),
+              ],
+            })],
+          })],
+          width: { size: 9360, type: WidthType.DXA },
+          columnWidths: [9360],
+        }))
+        docChildren.push(emptyLine())
+      }
+    }
+
+    // ── BUILD DOCUMENT ────────────────────────────────────────────────────────
     const now = new Date()
-    const generatedLabel = `Generado por Document Factory · ForumPHs · v1.4 · ${now.toLocaleDateString('es-PA')}`
+    const footerLabel = `Generado por Document Factory · ForumPHs · v1.4 · ${now.toLocaleDateString('es-PA')}`
 
     const doc = new Document({
       sections: [{
@@ -346,9 +477,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
           default: new Footer({
             children: [
               new Paragraph({
-                children: [
-                  new TextRun({ text: generatedLabel, size: 16, color: '888888', font: 'Arial' }),
-                ],
+                children: [new TextRun({ text: footerLabel, size: 16, color: '888888', font: 'Arial' })],
                 alignment: AlignmentType.CENTER,
               }),
             ],
@@ -358,20 +487,18 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       }],
     })
 
-    const buffer = await Packer.toBuffer(doc)
-    const base64 = buffer.toString('base64')
-
-    // QA v2 with completeness
+    const buffer   = await Packer.toBuffer(doc)
+    const base64   = buffer.toString('base64')
     const actaText = buildActaText(parsed, preflight, assignedBlocks)
     const qa_report = runQAScan(actaText, parsed, assignedBlocks)
 
-    // Filename: ACTA_OR_1-2026_PH_SLUG_df_v1.docx
-    const slug = phName.replace(/[^A-Z0-9]/gi, '_').toUpperCase().replace(/_+/g, '_').replace(/^_|_$/g, '')
-    const filename = `ACTA_${typeCode}_${actaNum}-${year}_${slug}_df_v1.docx`
-
+    const slug     = phName.replace(/[^A-Z0-9]/gi, '_').toUpperCase().replace(/_+/g, '_').replace(/^_|_$/g, '')
+    const annotatedSuffix = icrFindings.length > 0 ? '_ICR' : ''
+    const filename = `ACTA_${typeCode}_${actaNum}-${year}_${slug}_df_v1${annotatedSuffix}.docx`
     const wordCount = actaText.split(/\s+/).length
 
     return NextResponse.json({ success: true, docx_base64: base64, filename, word_count: wordCount, qa_report, acta_text: actaText })
+
   } catch (err: unknown) {
     console.error('Generate error:', err)
     return NextResponse.json({ success: false, error: err instanceof Error ? err.message : String(err) }, { status: 500 })

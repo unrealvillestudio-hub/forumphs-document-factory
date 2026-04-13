@@ -38,37 +38,13 @@ const STEPS = [
 ]
 
 // ── UNRLVL animated signature — BP_BRAND_v1.2 canonical ──────────────────────
-// RULE: chevron > ALWAYS blinks with chev-listen. STUDIO always graphite+smaller.
 function UnrlvlSig({ size = 11 }: { size?: number }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 0 }}>
-      <span style={{
-        fontFamily: "'Bebas Neue', sans-serif",
-        fontSize: size,
-        letterSpacing: '0.08em',
-        color: 'rgba(242,240,236,0.62)',
-      }}>UNREAL</span>
-      <span style={{
-        fontFamily: "'Bebas Neue', sans-serif",
-        fontSize: size,
-        color: '#00FFD1',
-        display: 'inline-block',
-        animation: 'chev-listen 0.9s ease-in-out infinite',
-      }}>&gt;</span>
-      <span style={{
-        fontFamily: "'Bebas Neue', sans-serif",
-        fontSize: size,
-        letterSpacing: '0.08em',
-        color: 'rgba(242,240,236,0.62)',
-      }}>ILLE</span>
-      <span style={{
-        fontFamily: "'Bebas Neue', sans-serif",
-        fontSize: Math.round(size * 0.72),
-        letterSpacing: '0.24em',
-        color: '#1A1A1A',
-        marginLeft: 5,
-        verticalAlign: 'baseline',
-      }}>STUDIO</span>
+      <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: size, letterSpacing: '0.08em', color: 'rgba(242,240,236,0.62)' }}>UNREAL</span>
+      <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: size, color: '#00FFD1', display: 'inline-block', animation: 'chev-listen 0.9s ease-in-out infinite' }}>&gt;</span>
+      <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: size, letterSpacing: '0.08em', color: 'rgba(242,240,236,0.62)' }}>ILLE</span>
+      <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: Math.round(size * 0.72), letterSpacing: '0.24em', color: '#1A1A1A', marginLeft: 5, verticalAlign: 'baseline' }}>STUDIO</span>
     </span>
   )
 }
@@ -84,6 +60,7 @@ export default function Home() {
   const [output, setOutput] = useState<DocOutput | null>(null)
   const [icrReport, setIcrReport] = useState<ICRReport | null>(null)
   const [icrLoading, setIcrLoading] = useState(false)
+  const [loadingAnnotated, setLoadingAnnotated] = useState(false)
   const autoRetryRef = useRef(0)
   const [offerRetryBanner, setOfferRetryBanner] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -93,35 +70,28 @@ export default function Home() {
   // ── Step 1: Upload & Parse ZIP ────────────────────────────────────────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleFileSelected = async (extracted: any) => {
-    setUploading(true)
-    setError(null)
+    setUploading(true); setError(null)
     try {
       const res = await fetch('/api/parse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(extracted),
       })
       const data = await res.json()
       if (!data.success || !data.parsed) throw new Error(data.error || 'Error al procesar el ZIP')
-      setParsed(data.parsed)
-      setGaps(data.preflight_gaps || [])
+      setParsed(data.parsed); setGaps(data.preflight_gaps || [])
       const jid = await createJob({ stage: 'preflight', parsed: data.parsed })
       if (jid) { setJobId(jid); saveJobId(jid) }
       setStep('preflight')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error desconocido')
-      setStep('error')
-    } finally {
-      setUploading(false)
-    }
+      setError(err instanceof Error ? err.message : 'Error desconocido'); setStep('error')
+    } finally { setUploading(false) }
   }
 
   // ── Step 2: Pre-flight ────────────────────────────────────────────────────
   const handlePreflightSubmit = (answers: Record<string, string | number | boolean>, informe?: string) => {
     if (!parsed) return
     const pf: PreflightData = {
-      finca: answers.finca as string,
-      codigo: answers.codigo as string,
+      finca: answers.finca as string, codigo: answers.codigo as string,
       convocatoria_text: answers.convocatoria_text as string,
       has_informe_gestion: Boolean(answers.has_informe_gestion),
       informe_gestion_text: informe,
@@ -140,8 +110,7 @@ export default function Home() {
       },
     }
     setParsed(updatedParsed)
-    const toFormalize = parsed.debates.filter(b => !b.skip)
-    setBlocksToFormalize(toFormalize)
+    setBlocksToFormalize(parsed.debates.filter(b => !b.skip))
     if (jobId) updateJob(jobId, { stage: 'formalizing', preflight: pf })
     setStep('formalizing')
   }
@@ -157,15 +126,12 @@ export default function Home() {
   // ── Step 4: Generate DOCX ─────────────────────────────────────────────────
   const generateDocx = async (blocks?: DebateBlock[], opts?: { skipToDownload?: boolean }) => {
     if (!parsed || !preflight) return
-    setGenerating(true)
-    setError(null)
+    setGenerating(true); setError(null)
     try {
       const res = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          parsed,
-          preflight,
+          parsed, preflight,
           formalizedBlocks: blocks || formalizedBlocks,
           retry_attempt: autoRetryRef.current,
         }),
@@ -173,48 +139,24 @@ export default function Home() {
       const data = await res.json()
       if (!data.success) throw new Error(data.error || 'Error al generar el acta')
       if (jobId) updateJob(jobId, { stage: 'done' as any, qa_report: data.qa_report, output_filename: data.filename })
-
-      setOutput({
-        docx_base64: data.docx_base64,
-        filename: data.filename,
-        word_count: data.word_count,
-        qa_report: data.qa_report,
-        acta_text: data.acta_text,
-      })
-
-      // ICR correction re-run → skip QA/ICR, straight to download
-      if (opts?.skipToDownload) {
-        setStep('done')
-        return
-      }
-
-      // Simplified sweep: < 70% + retries left → offer user (2nd or 3rd sweep)
+      setOutput({ docx_base64: data.docx_base64, filename: data.filename, word_count: data.word_count, qa_report: data.qa_report, acta_text: data.acta_text })
+      if (opts?.skipToDownload) { setStep('done'); return }
       const formalizedPct = data.qa_report?.formalized_pct ?? 0
-      if (formalizedPct < 70 && autoRetryRef.current < 2) {
-        setOfferRetryBanner(true)
-      }
+      if (formalizedPct < 70 && autoRetryRef.current < 2) setOfferRetryBanner(true)
       setStep('qa')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al generar')
-      setStep('error')
-    } finally {
-      setGenerating(false)
-    }
+      setError(err instanceof Error ? err.message : 'Error al generar'); setStep('error')
+    } finally { setGenerating(false) }
   }
 
   // ── ICR (user-triggered) ─────────────────────────────────────────────────
   const runICR = async () => {
     if (!output || !parsed) { setStep('icr'); return }
-    setIcrLoading(true)
-    setStep('icr')
-    const timeout = setTimeout(() => {
-      setIcrLoading(false)
-      setStep('done')
-    }, 45000)
+    setIcrLoading(true); setStep('icr')
+    const timeout = setTimeout(() => { setIcrLoading(false); setStep('done') }, 45000)
     try {
       const icrRes = await fetch('/api/icr', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ acta_text: output.acta_text || '', parsed }),
       })
       const icrData = await icrRes.json()
@@ -223,16 +165,43 @@ export default function Home() {
     finally { clearTimeout(timeout); setIcrLoading(false) }
   }
 
-  // ── Download ─────────────────────────────────────────────────────────────
+  // ── Download clean ────────────────────────────────────────────────────────
   const handleDownload = () => {
     if (!output) return
-    const bytes = atob(output.docx_base64)
-    const arr = new Uint8Array(bytes.length)
+    triggerDownload(output.docx_base64, output.filename)
+  }
+
+  // ── Download annotated (with ICR findings embedded) ───────────────────────
+  const handleDownloadAnnotated = async () => {
+    if (!parsed || !preflight || !icrReport) return
+    setLoadingAnnotated(true)
+    try {
+      const res = await fetch('/api/generate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parsed, preflight,
+          formalizedBlocks,
+          retry_attempt: autoRetryRef.current,
+          icr_findings: icrReport.findings, // ← triggers inline banners + annex page
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.error || 'Error al generar versión anotada')
+      triggerDownload(data.docx_base64, data.filename)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al generar versión anotada')
+    } finally { setLoadingAnnotated(false) }
+  }
+
+  // ── Shared download trigger ───────────────────────────────────────────────
+  const triggerDownload = (base64: string, filename: string) => {
+    const bytes = atob(base64)
+    const arr   = new Uint8Array(bytes.length)
     for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i)
-    const blob = new Blob([arr], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url; a.download = output.filename; a.click()
+    const blob  = new Blob([arr], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })
+    const url   = URL.createObjectURL(blob)
+    const a     = document.createElement('a')
+    a.href = url; a.download = filename; a.click()
     URL.revokeObjectURL(url)
   }
 
@@ -242,7 +211,7 @@ export default function Home() {
     setIcrReport(null); setIcrLoading(false); autoRetryRef.current = 0
     setGaps([]); setPreflight(null); setBlocksToFormalize([])
     setFormalizedBlocks([]); setOutput(null); setError(null)
-    setOfferRetryBanner(false)
+    setOfferRetryBanner(false); setLoadingAnnotated(false)
   }
 
   const activeStepIndex = STEPS.findIndex(s => s.id === step)
@@ -250,7 +219,7 @@ export default function Home() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--carbon)' }}>
 
-      {/* Keyframes: chev-listen · BP_BRAND_v1.2 · Bebas Neue */}
+      {/* Keyframes — BP_BRAND_v1.2 */}
       <style>{`
         @keyframes chev-listen {
           0%,45%  { opacity: 1; }
@@ -267,44 +236,24 @@ export default function Home() {
         padding: '0 32px', height: 56,
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       }}>
-        {/* ForumPHs PNG logo */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/FPHS_logo-wt.png" alt="ForumPHs" style={{ height: 20, width: 'auto' }} />
           <span style={{ color: 'rgba(200,196,190,0.2)', fontSize: 12 }}>·</span>
-          <span style={{
-            fontFamily: 'DM Sans, sans-serif', fontSize: 11, fontWeight: 500,
-            letterSpacing: '0.1em', textTransform: 'uppercase' as const,
-            color: 'rgba(200,196,190,0.4)',
-          }}>Document Factory</span>
+          <span style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 11, fontWeight: 500, letterSpacing: '0.1em', textTransform: 'uppercase' as const, color: 'rgba(200,196,190,0.4)' }}>
+            Document Factory
+          </span>
         </div>
-
-        {/* Step indicator */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           {STEPS.map((s, i) => {
-            const isDone = i < activeStepIndex
-            const isActive = i === activeStepIndex
+            const isDone = i < activeStepIndex; const isActive = i === activeStepIndex
             return (
               <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '4px 10px', borderRadius: 6,
-                  background: isActive ? 'rgba(92,52,114,0.2)' : 'transparent',
-                  border: isActive ? '1px solid rgba(92,52,114,0.4)' : '1px solid transparent',
-                }}>
-                  <div style={{
-                    width: 6, height: 6, borderRadius: '50%',
-                    background: isDone ? '#4ADE80' : isActive ? 'var(--amatista-light)' : 'rgba(200,196,190,0.2)',
-                  }} />
-                  <span style={{
-                    fontSize: 11,
-                    color: isDone ? '#4ADE80' : isActive ? 'var(--parch)' : 'rgba(200,196,190,0.3)',
-                    fontWeight: isActive ? 600 : 400, letterSpacing: '0.04em',
-                  }}>{s.label}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 6, background: isActive ? 'rgba(92,52,114,0.2)' : 'transparent', border: isActive ? '1px solid rgba(92,52,114,0.4)' : '1px solid transparent' }}>
+                  <div style={{ width: 6, height: 6, borderRadius: '50%', background: isDone ? '#4ADE80' : isActive ? 'var(--amatista-light)' : 'rgba(200,196,190,0.2)' }} />
+                  <span style={{ fontSize: 11, color: isDone ? '#4ADE80' : isActive ? 'var(--parch)' : 'rgba(200,196,190,0.3)', fontWeight: isActive ? 600 : 400, letterSpacing: '0.04em' }}>{s.label}</span>
                 </div>
-                {i < STEPS.length - 1 && (
-                  <span style={{ color: 'rgba(200,196,190,0.15)', fontSize: 10 }}>›</span>
-                )}
+                {i < STEPS.length - 1 && <span style={{ color: 'rgba(200,196,190,0.15)', fontSize: 10 }}>›</span>}
               </div>
             )
           })}
@@ -314,41 +263,26 @@ export default function Home() {
       {/* ── Main content ────────────────────────────────────────────────── */}
       <div style={{ maxWidth: 800, margin: '0 auto', padding: '48px 32px' }}>
 
-        {step === 'upload' && (
-          <UploadZone onDataReady={handleFileSelected} loading={uploading} />
-        )}
+        {step === 'upload' && <UploadZone onDataReady={handleFileSelected} loading={uploading} />}
 
-        {step === 'preflight' && parsed && (
-          <PreflightForm gaps={gaps} parsed={parsed} onSubmit={handlePreflightSubmit} />
-        )}
+        {step === 'preflight' && parsed && <PreflightForm gaps={gaps} parsed={parsed} onSubmit={handlePreflightSubmit} />}
 
         {step === 'formalizing' && blocksToFormalize.length > 0 && (
           <ProcessingPipeline
             key={`pipeline-${autoRetryRef.current}`}
-            blocks={blocksToFormalize}
-            skeleton={parsed?.skeleton}
-            onComplete={handleFormalizationComplete}
-            retryAttempt={autoRetryRef.current}
+            blocks={blocksToFormalize} skeleton={parsed?.skeleton}
+            onComplete={handleFormalizationComplete} retryAttempt={autoRetryRef.current}
           />
         )}
 
         {step === 'generating' && (
           <div className="fade-in" style={{ textAlign: 'center', padding: '64px 0' }}>
-            <div style={{
-              width: 64, height: 64,
-              border: '3px solid rgba(92,52,114,0.3)', borderTop: '3px solid var(--amatista)',
-              borderRadius: '50%', margin: '0 auto 24px',
-              animation: 'spin-slow 1s linear infinite',
-            }} />
+            <div style={{ width: 64, height: 64, border: '3px solid rgba(92,52,114,0.3)', borderTop: '3px solid var(--amatista)', borderRadius: '50%', margin: '0 auto 24px', animation: 'spin-slow 1s linear infinite' }} />
             <h2 style={{ fontFamily: 'EB Garamond, serif', fontSize: 28, color: 'var(--parch)', fontWeight: 400, margin: '0 0 8px' }}>
-              {autoRetryRef.current > 0
-                ? `${autoRetryRef.current === 1 ? '2º' : '3er'} barrido — tolerancia +${autoRetryRef.current * 10}%`
-                : 'Generando el Acta'}
+              {autoRetryRef.current > 0 ? `${autoRetryRef.current === 1 ? '2º' : '3er'} barrido — tolerancia +${autoRetryRef.current * 10}%` : 'Generando el Acta'}
             </h2>
             <p style={{ color: 'var(--parch-dim)', fontSize: 14 }}>
-              {autoRetryRef.current > 0
-                ? 'Agentes re-procesando — el generador espera'
-                : 'Ensamblando secciones · aplicando formato · construyendo .docx'}
+              {autoRetryRef.current > 0 ? 'Agentes re-procesando — el generador espera' : 'Ensamblando secciones · aplicando formato · construyendo .docx'}
             </p>
           </div>
         )}
@@ -357,30 +291,19 @@ export default function Home() {
         {(step === 'qa' || step === 'icr' || step === 'done') && output && (
           <>
             {step === 'qa' && offerRetryBanner && (
-              <div style={{
-                background: 'rgba(92,52,114,0.08)', border: '1px solid rgba(92,52,114,0.25)',
-                borderRadius: 10, padding: '14px 20px', marginBottom: 16,
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16,
-              }}>
+              <div style={{ background: 'rgba(92,52,114,0.08)', border: '1px solid rgba(92,52,114,0.25)', borderRadius: 10, padding: '14px 20px', marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--amatista-light)', marginBottom: 3 }}>
                     Cobertura al {output.qa_report?.formalized_pct ?? 0}% — ¿hacemos un barrido más?
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--parch-dim)' }}>
-                    {autoRetryRef.current === 0
-                      ? '2º barrido — agentes re-procesan con +10% de tolerancia'
-                      : '3er barrido — +10% adicional de tolerancia'}
+                    {autoRetryRef.current === 0 ? '2º barrido — agentes re-procesan con +10% de tolerancia' : '3er barrido — +10% adicional de tolerancia'}
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
                   <button
                     style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--amatista)', color: '#fff', fontSize: 12, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif', fontWeight: 600 }}
-                    onClick={() => {
-                      setOfferRetryBanner(false)
-                      autoRetryRef.current += 1
-                      setFormalizedBlocks([])
-                      setStep('formalizing')
-                    }}
+                    onClick={() => { setOfferRetryBanner(false); autoRetryRef.current += 1; setFormalizedBlocks([]); setStep('formalizing') }}
                   >
                     {autoRetryRef.current === 0 ? '2º barrido · +10% tolerancia' : '3er barrido · +10% tolerancia'}
                   </button>
@@ -394,14 +317,10 @@ export default function Home() {
               </div>
             )}
             <QAReportView
-              report={output.qa_report}
-              wordCount={output.word_count}
-              filename={output.filename}
+              report={output.qa_report} wordCount={output.word_count} filename={output.filename}
               onDownload={step === 'done' ? handleDownload : undefined}
-              onRegenerate={handleReset}
-              showDownload={step === 'done'}
-              onContinue={step === 'qa' ? runICR : undefined}
-              continueLabel="Continuar → ICR"
+              onRegenerate={handleReset} showDownload={step === 'done'}
+              onContinue={step === 'qa' ? runICR : undefined} continueLabel="Continuar → ICR"
             />
           </>
         )}
@@ -440,34 +359,49 @@ export default function Home() {
             blocks={formalizedBlocks as unknown as Parameters<typeof ICRResolution>[0]['blocks']}
             onComplete={(correctedBlocks) => {
               const typed = correctedBlocks as unknown as DebateBlock[]
-              setFormalizedBlocks(typed)
-              setStep('generating')
+              setFormalizedBlocks(typed); setStep('generating')
               generateDocx(typed, { skipToDownload: true })
             }}
             onBack={() => setStep('icr')}
           />
         )}
 
-        {/* Download bar */}
-        {(step === 'icr' || step === 'done') && output && (
-          <div style={{ marginTop: 24, display: 'flex', gap: 12, alignItems: 'center' }}>
-            {icrLoading ? (
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 10,
-                padding: '12px 24px', borderRadius: 10,
-                background: 'rgba(92,52,114,0.1)', border: '1px solid rgba(92,52,114,0.25)',
-              }}>
-                <div style={{ width: 18, height: 18, border: '2px solid rgba(92,52,114,0.3)', borderTop: '2px solid var(--amatista)', borderRadius: '50%', animation: 'spin-slow 1s linear infinite' }} />
-                <span style={{ color: 'var(--amatista-light)', fontSize: 14 }}>ICR auditando — disponible al terminar…</span>
-              </div>
-            ) : (
-              <>
-                <button className="df-btn-primary" onClick={handleDownload} style={{ padding: '12px 32px', fontSize: 15 }}>
-                  ⬇ Descargar .docx
-                </button>
-                {step === 'done' && <button className="df-btn-ghost" onClick={handleReset}>↺ Nueva acta</button>}
-              </>
+        {/* ── Download bar — ONLY on step 'done' ───────────────────────── */}
+        {step === 'done' && output && (
+          <div style={{ marginTop: 24, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' as const }}>
+            {/* Clean download */}
+            <button className="df-btn-primary" onClick={handleDownload} style={{ padding: '12px 32px', fontSize: 15 }}>
+              ⬇ Descargar .docx
+            </button>
+
+            {/* Annotated download — only when ICR found issues */}
+            {icrReport && icrReport.findings.length > 0 && (
+              <button
+                className="df-btn-ghost"
+                onClick={handleDownloadAnnotated}
+                disabled={loadingAnnotated}
+                style={{ padding: '12px 24px', fontSize: 14, display: 'flex', alignItems: 'center', gap: 8, opacity: loadingAnnotated ? 0.6 : 1 }}
+              >
+                {loadingAnnotated ? (
+                  <>
+                    <div style={{ width: 14, height: 14, border: '2px solid rgba(200,196,190,0.3)', borderTop: '2px solid var(--parch)', borderRadius: '50%', animation: 'spin-slow 1s linear infinite' }} />
+                    Generando...
+                  </>
+                ) : (
+                  `⚑ Con anotaciones ICR (${icrReport.findings.length})`
+                )}
+              </button>
             )}
+
+            <button className="df-btn-ghost" onClick={handleReset}>↺ Nueva acta</button>
+          </div>
+        )}
+
+        {/* ICR loading bar — shown while auditing, no download yet */}
+        {step === 'icr' && icrLoading && (
+          <div style={{ marginTop: 24, display: 'flex', alignItems: 'center', gap: 10, padding: '12px 24px', borderRadius: 10, background: 'rgba(92,52,114,0.1)', border: '1px solid rgba(92,52,114,0.25)' }}>
+            <div style={{ width: 18, height: 18, border: '2px solid rgba(92,52,114,0.3)', borderTop: '2px solid var(--amatista)', borderRadius: '50%', animation: 'spin-slow 1s linear infinite' }} />
+            <span style={{ color: 'var(--amatista-light)', fontSize: 14 }}>ICR auditando el documento — descarga disponible al terminar…</span>
           </div>
         )}
 
@@ -475,9 +409,7 @@ export default function Home() {
         {step === 'error' && (
           <div className="fade-in" style={{ textAlign: 'center', padding: '64px 0' }}>
             <div style={{ fontSize: 48, marginBottom: 20 }}>⚠️</div>
-            <h2 style={{ fontFamily: 'EB Garamond, serif', fontSize: 28, color: 'var(--terra)', fontWeight: 400, margin: '0 0 12px' }}>
-              Error en el proceso
-            </h2>
+            <h2 style={{ fontFamily: 'EB Garamond, serif', fontSize: 28, color: 'var(--terra)', fontWeight: 400, margin: '0 0 12px' }}>Error en el proceso</h2>
             <p style={{ color: 'var(--parch-dim)', fontSize: 14, maxWidth: 400, margin: '0 auto 32px' }}>{error}</p>
             <button className="df-btn-primary" onClick={handleReset}>↺ Intentar de nuevo</button>
           </div>
@@ -487,39 +419,25 @@ export default function Home() {
       {/* ── Footer — BP_BRAND_UNRLVL_v1.2 · 3-col · border-top 2px #00FFD1 ── */}
       <footer style={{
         position: 'fixed', bottom: 0, left: 0, right: 0,
-        borderTop: '2px solid #00FFD1',
-        background: 'rgba(28,34,51,0.98)',
-        padding: '10px 32px',
-        display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
-        alignItems: 'center', gap: '1rem',
-        backdropFilter: 'blur(12px)',
+        borderTop: '2px solid #00FFD1', background: 'rgba(28,34,51,0.98)',
+        padding: '10px 32px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
+        alignItems: 'center', gap: '1rem', backdropFilter: 'blur(12px)',
       }}>
-
-        {/* Col 1 — ForumPHs logo + product name */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/FPHS_logo-wt.png" alt="ForumPHs" style={{ height: 16, width: 'auto', opacity: 0.75 }} />
           <span style={{ color: 'rgba(200,196,190,0.2)', fontSize: 10 }}>·</span>
-          <span style={{ fontSize: 10, color: 'rgba(200,196,190,0.35)', letterSpacing: '0.04em' }}>
-            Document Factory v1.4
-          </span>
+          <span style={{ fontSize: 10, color: 'rgba(200,196,190,0.35)', letterSpacing: '0.04em' }}>Document Factory v1.4</span>
         </div>
-
-        {/* Col 2 — © rights */}
         <div style={{ textAlign: 'center', fontSize: 10, color: 'rgba(200,196,190,0.28)', letterSpacing: '0.05em' }}>
           © {new Date().getFullYear()} ForumPHs · Actas PH Panamá · Ley 284 de 2022
         </div>
-
-        {/* Col 3 — UNRLVL signature canonical */}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.1em', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            <span style={{ fontSize: 7, letterSpacing: '0.12em', textTransform: 'uppercase' as const, color: 'rgba(242,240,236,0.28)' }}>
-              Designed &amp; Developed by&nbsp;
-            </span>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.1em', flexWrap: 'wrap' as const, justifyContent: 'flex-end' }}>
+            <span style={{ fontSize: 7, letterSpacing: '0.12em', textTransform: 'uppercase' as const, color: 'rgba(242,240,236,0.28)' }}>Designed &amp; Developed by&nbsp;</span>
             <UnrlvlSig size={11} />
           </div>
         </div>
-
       </footer>
     </div>
   )
