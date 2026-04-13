@@ -252,7 +252,6 @@ export default function Home() {
 
       {/* Keyframes: chev-listen · BP_BRAND_v1.2 · Bebas Neue */}
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap');
         @keyframes chev-listen {
           0%,45%  { opacity: 1; }
           50%,92% { opacity: 0; }
@@ -271,7 +270,7 @@ export default function Home() {
         {/* ForumPHs PNG logo */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/FPHS_logo_wt.png" alt="ForumPHs" style={{ height: 20, width: 'auto' }} />
+          <img src="/logo-wt.png" alt="ForumPHs" style={{ height: 20, width: 'auto' }} />
           <span style={{ color: 'rgba(200,196,190,0.2)', fontSize: 12 }}>·</span>
           <span style={{
             fontFamily: 'DM Sans, sans-serif', fontSize: 11, fontWeight: 500,
@@ -499,7 +498,7 @@ export default function Home() {
         {/* Col 1 — ForumPHs logo + product name */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/FPHS_logo_wt.png" alt="ForumPHs" style={{ height: 16, width: 'auto', opacity: 0.75 }} />
+          <img src="/logo-wt.png" alt="ForumPHs" style={{ height: 16, width: 'auto', opacity: 0.75 }} />
           <span style={{ color: 'rgba(200,196,190,0.2)', fontSize: 10 }}>·</span>
           <span style={{ fontSize: 10, color: 'rgba(200,196,190,0.35)', letterSpacing: '0.04em' }}>
             Document Factory v1.4
