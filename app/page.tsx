@@ -1,11 +1,11 @@
 'use client'
-
 import { useState, useRef } from 'react'
 import UploadZone from '@/components/UploadZone'
 import PreflightForm from '@/components/PreflightForm'
 import ProcessingPipeline from '@/components/ProcessingPipeline'
 import QAReportView from '@/components/QAReport'
 import ICRReportView from '@/components/ICRReport'
+import ICRResolution from '@/components/ICRResolution'           // ← NEW
 import type { ICRReport } from '@/lib/types'
 import { createJob, updateJob, loadJob, saveJobId, loadJobId, clearJobId } from '@/lib/supabaseSession'
 import type {
@@ -16,7 +16,8 @@ import type {
   QAReport,
 } from '@/lib/types'
 
-type Step = 'upload' | 'preflight' | 'formalizing' | 'generating' | 'qa' | 'icr' | 'done' | 'error'
+// ← ADD 'icr-resolution'
+type Step = 'upload' | 'preflight' | 'formalizing' | 'generating' | 'qa' | 'icr' | 'icr-resolution' | 'done' | 'error'
 
 interface DocOutput {
   docx_base64: string
@@ -26,14 +27,16 @@ interface DocOutput {
   acta_text?: string
 }
 
+// ← ADD { id: 'icr-resolution', label: 'Revisión' } before done
 const STEPS = [
-  { id: 'upload', label: 'ZIP' },
-  { id: 'preflight', label: 'Pre-flight' },
-  { id: 'formalizing', label: 'Paso 0.5' },
-  { id: 'generating', label: 'Generar' },
-  { id: 'qa', label: 'QA' },
-  { id: 'icr', label: 'ICR' },
-  { id: 'done', label: 'Descarga' },
+  { id: 'upload',          label: 'ZIP'      },
+  { id: 'preflight',       label: 'Pre-flight'},
+  { id: 'formalizing',     label: 'Paso 0.5' },
+  { id: 'generating',      label: 'Generar'  },
+  { id: 'qa',              label: 'QA'       },
+  { id: 'icr',             label: 'ICR'      },
+  { id: 'icr-resolution',  label: 'Revisión' },   // ← NEW
+  { id: 'done',            label: 'Descarga' },
 ]
 
 export default function Home() {
@@ -59,23 +62,18 @@ export default function Home() {
   const handleFileSelected = async (extracted: any) => {
     setUploading(true)
     setError(null)
-
     try {
       const res = await fetch('/api/parse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(extracted),
       })
-
       const data = await res.json()
-
       if (!data.success || !data.parsed) {
         throw new Error(data.error || 'Error al procesar el ZIP')
       }
-
       setParsed(data.parsed)
       setGaps(data.preflight_gaps || [])
-      // Persist job
       const jid = await createJob({ stage: 'preflight', parsed: data.parsed })
       if (jid) { setJobId(jid); saveJobId(jid) }
       setStep('preflight')
@@ -90,7 +88,6 @@ export default function Home() {
   // ---- Step 2: Pre-flight ----
   const handlePreflightSubmit = (answers: Record<string, string | number | boolean>, informe?: string) => {
     if (!parsed) return
-
     const pf: PreflightData = {
       finca: answers.finca as string,
       codigo: answers.codigo as string,
@@ -100,10 +97,7 @@ export default function Home() {
       confirmed_present_units: answers.confirmed_present_units as number,
       confirmed_time_end: answers.confirmed_time_end as string,
     }
-
     setPreflight(pf)
-
-    // Apply answers to skeleton
     const updatedParsed: ParsedHypalZip = {
       ...parsed,
       skeleton: {
@@ -115,8 +109,6 @@ export default function Home() {
       },
     }
     setParsed(updatedParsed)
-
-    // Prepare blocks for formalization (non-skip blocks only)
     const toFormalize = parsed.debates.filter(b => !b.skip)
     setBlocksToFormalize(toFormalize)
     if (jobId) updateJob(jobId, { stage: 'formalizing', preflight: pf })
@@ -132,11 +124,11 @@ export default function Home() {
   }
 
   // ---- Step 4: Generate DOCX ----
-  const generateDocx = async (blocks?: DebateBlock[]) => {
+  // ← ADD opts param: { skipToDownload?: boolean }
+  const generateDocx = async (blocks?: DebateBlock[], opts?: { skipToDownload?: boolean }) => {
     if (!parsed || !preflight) return
     setGenerating(true)
     setError(null)
-
     try {
       const res = await fetch('/api/generate', {
         method: 'POST',
@@ -148,17 +140,9 @@ export default function Home() {
           retry_attempt: autoRetryRef.current,
         }),
       })
-
       const data = await res.json()
-
       if (!data.success) throw new Error(data.error || 'Error al generar el acta')
-
       if (jobId) updateJob(jobId, { stage: 'done' as any, qa_report: data.qa_report, output_filename: data.filename })
-      const qaReport = data.qa_report
-      const formalizedPct = qaReport?.formalized_pct ?? 0
-      const estimatedPages = Math.round((data.word_count || 0) / 500)
-      const needsRetry = (formalizedPct < 60 && estimatedPages < 22) && autoRetryRef.current < MAX_AUTO_RETRIES
-      const offerRetry = !needsRetry && formalizedPct >= 60 && formalizedPct < 70 && autoRetryRef.current < MAX_AUTO_RETRIES
 
       setOutput({
         docx_base64: data.docx_base64,
@@ -168,20 +152,26 @@ export default function Home() {
         acta_text: data.acta_text,
       })
 
+      // ← NEW: correction re-run — skip QA/ICR, go straight to download
+      if (opts?.skipToDownload) {
+        setStep('done')
+        return
+      }
+
+      const qaReport = data.qa_report
+      const formalizedPct = qaReport?.formalized_pct ?? 0
+      const estimatedPages = Math.round((data.word_count || 0) / 500)
+      const needsRetry = (formalizedPct < 60 && estimatedPages < 22) && autoRetryRef.current < MAX_AUTO_RETRIES
+      const offerRetry = !needsRetry && formalizedPct >= 60 && formalizedPct < 70 && autoRetryRef.current < MAX_AUTO_RETRIES
+
       if (needsRetry) {
         autoRetryRef.current += 1
-        // Reset formalized blocks — forces ProcessingPipeline to re-run
-        // with new retryAttempt (higher tolerance). generateDocx will be
-        // called automatically by handleFormalizationComplete when agents finish.
         setFormalizedBlocks([])
         setStep('formalizing')
         return
       }
-      // Check if we should offer manual retry at 60-70%
       if (offerRetry) setOfferRetryBanner(true)
-      // Max retries reached or threshold met — proceed to QA
       setStep('qa')
-      // ICR is triggered manually by user clicking "Continuar → ICR"
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al generar')
       setStep('error')
@@ -196,13 +186,10 @@ export default function Home() {
     const actaText = output.acta_text || ''
     setIcrLoading(true)
     setStep('icr')
-
-    // Timeout: if ICR takes >45s, advance to done anyway
     const timeout = setTimeout(() => {
       setIcrLoading(false)
       setStep('done')
     }, 45000)
-
     try {
       const icrRes = await fetch('/api/icr', {
         method: 'POST',
@@ -215,7 +202,7 @@ export default function Home() {
     finally {
       clearTimeout(timeout)
       setIcrLoading(false)
-      setStep('done')
+      // Stay on icr — user will click Continuar
     }
   }
 
@@ -276,7 +263,6 @@ export default function Home() {
           <span style={{ color: 'rgba(200,196,190,0.2)', margin: '0 6px' }}>·</span>
           <span style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 11, fontWeight: 500, letterSpacing: '0.1em', textTransform: 'uppercase' as const, color: 'rgba(200,196,190,0.4)' }}>Document Factory</span>
         </div>
-
         {/* Step indicator */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           {STEPS.map((s, i) => {
@@ -317,11 +303,8 @@ export default function Home() {
       </div>
 
       {/* Main content */}
-      <div style={{
-        maxWidth: 800,
-        margin: '0 auto',
-        padding: '48px 32px',
-      }}>
+      <div style={{ maxWidth: 800, margin: '0 auto', padding: '48px 32px' }}>
+
         {/* Upload */}
         {step === 'upload' && (
           <UploadZone onDataReady={handleFileSelected} loading={uploading} />
@@ -329,11 +312,7 @@ export default function Home() {
 
         {/* Pre-flight */}
         {step === 'preflight' && parsed && (
-          <PreflightForm
-            gaps={gaps}
-            parsed={parsed}
-            onSubmit={handlePreflightSubmit}
-          />
+          <PreflightForm gaps={gaps} parsed={parsed} onSubmit={handlePreflightSubmit} />
         )}
 
         {/* Formalizing */}
@@ -365,10 +344,14 @@ export default function Home() {
               fontWeight: 400,
               margin: '0 0 8px',
             }}>
-              {autoRetryRef.current > 0 ? `Mejorando cobertura (intento ${autoRetryRef.current + 1}/${MAX_AUTO_RETRIES + 1})` : 'Generando el Acta'}
+              {autoRetryRef.current > 0
+                ? `Mejorando cobertura (intento ${autoRetryRef.current + 1}/${MAX_AUTO_RETRIES + 1})`
+                : 'Generando el Acta'}
             </h2>
             <p style={{ color: 'var(--parch-dim)', fontSize: 14 }}>
-              {autoRetryRef.current > 0 ? 'QA detectó cobertura insuficiente — regenerando automáticamente' : 'Ensamblando secciones · aplicando formato · construyendo .docx'}
+              {autoRetryRef.current > 0
+                ? 'QA detectó cobertura insuficiente — regenerando automáticamente'
+                : 'Ensamblando secciones · aplicando formato · construyendo .docx'}
             </p>
           </div>
         )}
@@ -376,7 +359,6 @@ export default function Home() {
         {/* QA step */}
         {(step === 'qa' || step === 'icr' || step === 'done') && output && (
           <>
-            {/* Offer manual retry at 60-70% coverage */}
             {step === 'qa' && offerRetryBanner && (
               <div style={{
                 background: 'rgba(92,52,114,0.08)', border: '1px solid rgba(92,52,114,0.25)',
@@ -407,7 +389,6 @@ export default function Home() {
                 </div>
               </div>
             )}
-            {/* Retry exhausted warning */}
             {step === 'qa' && autoRetryRef.current >= MAX_AUTO_RETRIES && (output.qa_report?.formalized_pct ?? 0) < 70 && (
               <div style={{
                 background: 'rgba(196,98,45,0.08)', border: '1px solid rgba(196,98,45,0.25)',
@@ -460,20 +441,52 @@ export default function Home() {
             {icrReport && (
               <>
                 <ICRReportView report={icrReport} loading={false} />
+                {/* ← CHANGE: go to icr-resolution instead of done */}
                 {step === 'icr' && (
                   <div style={{ marginTop: 20, display: 'flex', gap: 12 }}>
-                    <button className="df-btn-primary" onClick={() => setStep('done')} style={{ padding: '12px 32px', fontSize: 15 }}>
-                      Continuar → Descargar
+                    <button
+                      className="df-btn-primary"
+                      onClick={() => setStep('icr-resolution')}
+                      style={{ padding: '12px 32px', fontSize: 15 }}
+                    >
+                      Continuar → Revisión ICR
                     </button>
                     <button className="df-btn-ghost" onClick={handleReset}>↺ Regenerar</button>
                   </div>
                 )}
               </>
             )}
+            {/* If ICR timed out / no findings: skip to done */}
+            {!icrLoading && !icrReport && step === 'icr' && (
+              <div style={{ marginTop: 20, display: 'flex', gap: 12 }}>
+                <button
+                  className="df-btn-primary"
+                  onClick={() => setStep('done')}
+                  style={{ padding: '12px 32px', fontSize: 15 }}
+                >
+                  Continuar → Descargar
+                </button>
+              </div>
+            )}
           </div>
         )}
 
-        {/* Download — disabled while ICR loading, enabled on done */}
+        {/* ← NEW: ICR Resolution step */}
+        {step === 'icr-resolution' && icrReport && (
+          <ICRResolution
+            findings={icrReport.findings}
+            blocks={formalizedBlocks as unknown as Parameters<typeof ICRResolution>[0]['blocks']}
+            onComplete={(correctedBlocks, appliedCount) => {
+              const typed = correctedBlocks as unknown as DebateBlock[]
+              setFormalizedBlocks(typed)
+              setStep('generating')
+              generateDocx(typed, { skipToDownload: true })
+            }}
+            onBack={() => setStep('icr')}
+          />
+        )}
+
+        {/* Download bar — icr loading guard */}
         {(step === 'icr' || step === 'done') && output && (
           <div style={{ marginTop: 24, display: 'flex', gap: 12, alignItems: 'center' }}>
             {icrLoading ? (
@@ -537,7 +550,6 @@ export default function Home() {
         color: 'var(--parch-dim)',
         backdropFilter: 'blur(12px)',
       }}>
-        {/* Col 1 — ForumPHs wordmark BP_BRAND inline */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ fontFamily: 'EB Garamond, serif', fontWeight: 400, fontSize: 13, color: '#F0EDE8', letterSpacing: '0.01em' }}>Forum</span>
           <span style={{ fontFamily: 'DM Sans, sans-serif', fontWeight: 700, fontSize: 12, color: '#C4622D', letterSpacing: '0.06em' }}>PH</span>
@@ -545,19 +557,12 @@ export default function Home() {
           <span style={{ color: 'rgba(200,196,190,0.2)', margin: '0 4px' }}>·</span>
           <span style={{ color: 'var(--parch-dim)', letterSpacing: '0.04em' }}>Document Factory v1.4</span>
         </div>
-        {/* Col 2 — © rights (centered) */}
         <div style={{ textAlign: 'center', color: 'rgba(200,196,190,0.35)', letterSpacing: '0.05em' }}>
           © {new Date().getFullYear()} ForumPHs · Actas PH Panamá · Ley 284 de 2022
         </div>
-        {/* Col 3 — UNRLVL signature (right-aligned) */}
         <div style={{ textAlign: 'right' }}>
           Designed &amp; Developed by{' '}
-          <span style={{
-            fontFamily: 'DM Sans, sans-serif',
-            fontWeight: 600,
-            color: 'var(--parch)',
-            letterSpacing: '0.02em',
-          }}>
+          <span style={{ fontFamily: 'DM Sans, sans-serif', fontWeight: 600, color: 'var(--parch)', letterSpacing: '0.02em' }}>
             Unreal&gt;ille Studio
           </span>
         </div>
