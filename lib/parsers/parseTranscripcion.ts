@@ -1,5 +1,5 @@
 /**
- * parse_transcripcion.ts
+ * parseTranscripcion.ts
  * Parses the Zoom/Hypal transcription docx (already extracted to text)
  * into DebateBlock[] — one block per speaker turn.
  */
@@ -23,7 +23,9 @@ const SKIP_CONTAINS = [
 
 const PREAMBLE_NOISE = /^(okay[,.]?\s+|sí[,.]?\s+|si[,.]?\s+|buenas tardes[,.]?\s+|buenas noches[,.]?\s+|buenas[,.]?\s+|claro[,.]?\s+|perfecto[,.]?\s+|bien[,.]?\s+|mhm[,.]?\s+|este[,.]?\s+|ah[,.]?\s+|eh[,.]?\s+)+/i
 
-const LOGISTICA_NAMES = ['hipal', 'hypal', 'zoom', 'moderador', 'técnico', 'soporte']
+// FPH-015: Logistica — Hypal/Zoom coordinators + Daniel Puentes skip
+const LOGISTICA_NAMES = ['hipal', 'hypal', 'zoom', 'moderador', 'técnico', 'soporte',
+  'daniel puentes', 'daniel p', 'puentes']
 
 // Administration staff — should NOT be labeled as propietario/a
 const ADMIN_NAMES = [
@@ -47,7 +49,6 @@ const NOMBRES_FEMENINOS = new Set([
 ])
 
 // ---- Timestamp formats ----
-// HH:MM:SS.mmm --> HH:MM:SS.mmm or HH:MM:SS
 const TIMESTAMP_RE = /^\d{2}:\d{2}:\d{2}[\.,]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[\.,]\d{3}/
 
 // Speaker line: "Name Lastname:" or "Apartamento 7A | John Doe:" or "7A TA | John Doe:"
@@ -68,6 +69,12 @@ function detectRole(speakerRaw: string, speakerName: string): DebateBlock['speak
   const raw = speakerRaw.toLowerCase()
   const name = speakerName.toLowerCase()
 
+  // FPH-015: skip speaker whose name IS the PH building
+  // Hypal sometimes labels the host account as "PH Los Alamos", "P.H. Torre Alta", etc.
+  if (/^p\.?h\.?\s+\w/i.test(speakerRaw.trim()) || /^p\.?h\.?\s+\w/i.test(speakerName.trim())) {
+    return 'logistica'
+  }
+
   if (LOGISTICA_NAMES.some(l => raw.includes(l) || name.includes(l))) return 'logistica'
 
   // Ivette / administración — check expanded admin list
@@ -80,7 +87,6 @@ function detectRole(speakerRaw: string, speakerName: string): DebateBlock['speak
   if (raw.includes('presidente') || raw.includes('presidenta') ||
       raw.includes('junta direct') || raw.includes('vicepresid') ||
       raw.includes('tesorero') || raw.includes('secretari')) {
-    // Determine sub-role
     return detectGender(speakerName) === 'propietaria' ? 'propietaria' : 'propietario'
   }
 
@@ -93,9 +99,6 @@ function detectRole(speakerRaw: string, speakerName: string): DebateBlock['speak
 }
 
 function extractUnit(speakerRaw: string): string | undefined {
-  // "Apartamento 15B Torre A" → "TA-15B"
-  // "15B TA" → "TA-15B"
-  // "Apt. 20F TB" → "TB-20F"
   const m1 = speakerRaw.match(/[Aa](?:partamento|pto)\.?\s*(\d+[A-H])\s*(?:Torre|T\.?)?\s*([AB])?/i)
   if (m1) {
     const unit = m1[1]
@@ -108,16 +111,14 @@ function extractUnit(speakerRaw: string): string | undefined {
 }
 
 function extractSpeakerName(speakerRaw: string): string {
-  // Remove apartment prefixes
   let name = speakerRaw
     .replace(/[Aa]partamento\s+\d+[A-H]?\s*(?:[|]\s*)?/i, '')
     .replace(/[Aa]pto\.?\s*\d+[A-H]?\s*(?:[|]\s*)?/i, '')
     .replace(/Torre\s*[AB]\s*(?:[|]\s*)?/i, '')
-    .replace(/\bT[AB]\b\s*(?:[|]\s*)?/g, '')
+    .replace(/\b T[AB]\b\s*(?:[|]\s*)?/g, '')
     .replace(/\d+[A-H]\s*(?:[|]\s*)?/g, '')
     .replace(/\|/g, '')
     .trim()
-  // Capitalize properly
   return name.replace(/\b\w/g, c => c.toUpperCase()).trim()
 }
 
@@ -127,7 +128,6 @@ function cleanPreamble(text: string): string {
 
 function shouldSkip(text: string): { skip: boolean; reason?: string } {
   const t = text.trim().toLowerCase()
-  // Only skip completely empty text — Claude decides everything else
   if (!t || t.length < 4) return { skip: true, reason: 'empty' }
   return { skip: false }
 }
@@ -208,14 +208,14 @@ export function parseTranscripcion(rawText: string): DebateBlock[] {
 
   for (const line of consolidated) {
     const rawCleaned = cleanPreamble(line.text)
-    const cleaned = rawCleaned.trim() || line.text.trim()  // fallback to raw if cleaning empties
+    const cleaned = rawCleaned.trim() || line.text.trim()
     const { skip, reason } = shouldSkip(cleaned)
 
     const speakerName = extractSpeakerName(line.speaker)
     const speakerUnit = extractUnit(line.speaker)
     const role = detectRole(line.speaker, speakerName)
 
-    // Always skip logistica (Hypal/Zoom coordinators)
+    // Always skip logistica (Hypal/Zoom coordinators + PH name as host)
     if (role === 'logistica') continue
 
     blocks.push({
@@ -226,7 +226,7 @@ export function parseTranscripcion(rawText: string): DebateBlock[] {
       speaker_role: role,
       text_raw: line.text,
       text_cleaned: cleaned || line.text.trim(),
-      skip: skip,
+      skip,
       skip_reason: reason,
     })
   }
