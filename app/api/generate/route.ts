@@ -485,7 +485,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
           // Auto-size: max width 500pt, proportional height estimate
           docChildren.push(new Paragraph({
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            children: [(new ImageRun as any)({
+            children: [new (ImageRun as any)({
               data: imgBuffer,
               transformation: { width: 500, height: 360 },
             })],
