@@ -1,7 +1,15 @@
 // ============================================================
-// DOCUMENT FACTORY — TYPES
+// DOCUMENT FACTORY — TYPES  (v2 — FPH-016 + images)
 // ============================================================
-// ---- Parsed data structures ----
+
+// ── Image ──────────────────────────────────────────────────────────────────
+export interface ExtractedImage {
+  filename: string
+  data: string          // base64
+  type: 'image/png' | 'image/jpeg'
+}
+
+// ── Parsed data structures ─────────────────────────────────────────────────
 export interface SkeletonData {
   ph_name: string
   ph_finca?: string
@@ -22,17 +30,20 @@ export interface SkeletonData {
   agenda_items: AgendaItem[]
   raw_text: string
 }
+
 export interface AgendaItem {
   number: number
   title: string
   raw_text?: string
 }
+
 export interface AttendanceRecord {
   unit: string
   owner_name: string
   represented_by?: string
   tower?: string
 }
+
 export interface VotationRecord {
   topic: string
   yes_votes: number
@@ -43,6 +54,7 @@ export interface VotationRecord {
   approved: boolean
   raw?: string
 }
+
 export interface DebateBlock {
   timestamp?: string
   speaker_raw: string
@@ -51,31 +63,35 @@ export interface DebateBlock {
   speaker_role: 'propietario' | 'propietaria' | 'presidente' | 'secretario' | 'administracion' | 'abogado' | 'logistica' | 'unknown'
   text_raw: string
   text_cleaned?: string
-  text_formal?: string  // After Paso 0.5
+  text_formal?: string   // After Paso 0.5
   agenda_section?: number
   skip?: boolean
   skip_reason?: string
 }
+
 export interface ParsedHypalZip {
   skeleton: SkeletonData
   attendance: AttendanceRecord[]
   votations: VotationRecord[]
   debates: DebateBlock[]
   chat_notes: string[]
-  raw_files: Record<string, string>  // filename → extracted text
+  images: ExtractedImage[]               // ← FPH-016
+  raw_files: Record<string, string>      // filename → extracted text
 }
-// ---- Preflight ----
+
+// ── Preflight ──────────────────────────────────────────────────────────────
 export interface PreflightData {
   finca?: string
   codigo?: string
   convocatoria_text?: string
   has_informe_gestion: boolean
   informe_gestion_text?: string
-  vote_screenshots?: string[]  // base64 or URLs
+  vote_screenshots?: string[]            // base64 or URLs
   confirmed_present_units?: number
   confirmed_time_end?: string
-  confirmed_agenda_items?: string  // "1. Item\n2. Item\n..." — editable in pre-flight
+  confirmed_agenda_items?: string        // "1. Item\n2. Item\n..." — FPH-014
 }
+
 export interface PreflightGap {
   field: keyof PreflightData | string
   label: string
@@ -84,7 +100,8 @@ export interface PreflightGap {
   type: 'text' | 'textarea' | 'number' | 'boolean' | 'file'
   value?: string | number | boolean
 }
-// ---- Processing pipeline ----
+
+// ── Processing pipeline ────────────────────────────────────────────────────
 export type PipelineStage =
   | 'idle'
   | 'uploading'
@@ -95,6 +112,7 @@ export type PipelineStage =
   | 'qa_scan'
   | 'ready'
   | 'error'
+
 export interface PipelineProgress {
   stage: PipelineStage
   pct: number
@@ -104,6 +122,7 @@ export interface PipelineProgress {
   blocks_done?: number
   qa_errors?: number
 }
+
 export interface FormalizeProgress {
   block_index: number
   total: number
@@ -112,13 +131,15 @@ export interface FormalizeProgress {
   result?: string
   skipped?: boolean
 }
-// ---- QA ----
+
+// ── QA ─────────────────────────────────────────────────────────────────────
 export interface QAError {
   type: QAErrorType
   paragraph_index: number
   text_fragment: string
   suggestion?: string
 }
+
 export type QAErrorType =
   | 'FIRST_PERSON'
   | 'ORAL_ARTIFACT'
@@ -128,15 +149,18 @@ export type QAErrorType =
   | 'NUMBER_FORMAT'
   | 'GENDER_MISMATCH'
   | 'SPOKEN_WORD'
+
 export interface CompletenessItem {
   label: string
   passed: boolean
   detail?: string
 }
+
 export interface CompletenessReport {
   score: number
   items: CompletenessItem[]
 }
+
 export interface QAReport {
   formalized_pct?: number
   total_errors: number
@@ -148,7 +172,8 @@ export interface QAReport {
   passed: boolean
   verdict: 'PASS' | 'WARN' | 'FAIL' | 'STOP'
 }
-// ---- ICR — Industrial Consistency Review ----
+
+// ── ICR ─────────────────────────────────────────────────────────────────────
 export interface ICRFinding {
   severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
   category: 'VOTE_INCONSISTENCY' | 'ROLE_ERROR' | 'LEGAL_COMPLIANCE' | 'DATA_MISMATCH' | 'NARRATIVE_QUALITY' | 'STRUCTURAL'
@@ -156,6 +181,7 @@ export interface ICRFinding {
   issue: string
   suggestion: string
 }
+
 export interface ICRReport {
   verdict: 'APPROVED' | 'APPROVED_WITH_NOTES' | 'REQUIRES_CORRECTION' | 'BLOCKED'
   total_findings: number
@@ -166,7 +192,8 @@ export interface ICRReport {
   findings: ICRFinding[]
   auditor_summary: string
 }
-// ---- Document generation ----
+
+// ── Document generation ────────────────────────────────────────────────────
 export interface GeneratedActa {
   docx_buffer?: ArrayBuffer
   docx_base64?: string
@@ -175,7 +202,8 @@ export interface GeneratedActa {
   pages_estimate: number
   qa_report: QAReport
 }
-// ---- App state ----
+
+// ── App state ──────────────────────────────────────────────────────────────
 export interface JobState {
   id: string
   created_at: string
@@ -190,11 +218,13 @@ export interface JobState {
   output_filename?: string
   error?: string
 }
+
 export interface ActaSection {
   section_number?: number
   title: string
   paragraphs: ActaParagraph[]
 }
+
 export interface ActaParagraph {
   text: string
   style: 'normal' | 'heading1' | 'heading2' | 'list_bullet' | 'indent' | 'centered' | 'signature'
@@ -203,20 +233,23 @@ export interface ActaParagraph {
   underline?: boolean
   spacing_before?: number
   indent_left?: number
-  mark?: boolean  // highlight
+  mark?: boolean
 }
-// ---- API responses ----
+
+// ── API responses ──────────────────────────────────────────────────────────
 export interface ParseResponse {
   success: boolean
   parsed?: ParsedHypalZip
   preflight_gaps?: PreflightGap[]
   error?: string
 }
+
 export interface FormalizeResponse {
   success: boolean
   blocks?: DebateBlock[]
   error?: string
 }
+
 export interface GenerateResponse {
   success: boolean
   docx_base64?: string
@@ -226,6 +259,7 @@ export interface GenerateResponse {
   acta_text?: string
   error?: string
 }
+
 export interface QAScanResponse {
   success: boolean
   report?: QAReport

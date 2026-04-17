@@ -423,6 +423,91 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         docChildren.push(emptyLine())
       }
     }
+/**
+ * PATCH para app/api/generate/route.ts — FPH-016 Imágenes en DOCX
+ *
+ * INSTRUCCIÓN: Busca la línea que dice:
+ *
+ *     // ── BUILD ──────────
+ *
+ * (está cerca del final del archivo, antes de `const now = new Date()`)
+ *
+ * Pega TODO el bloque de abajo JUSTO ANTES de esa línea.
+ *
+ * ════════════════════════════════════════════════════════════════
+ */
+
+    // ── IMAGES APPENDIX — FPH-016 ──────────────────────────────────────────────
+    const docImages = parsed.images || []
+    if (docImages.length > 0) {
+      const { ImageRun } = await import('docx')
+
+      // Page break before appendix
+      docChildren.push(new Paragraph({
+        children: [new TextRun({ text: '', size: 22, font: TNR })],
+        pageBreakBefore: true,
+        spacing: { before: 0, after: 0 },
+      }))
+
+      docChildren.push(new Paragraph({
+        children: [new TextRun({
+          text: 'DOCUMENTOS DE RESPALDO — IMÁGENES',
+          bold: true,
+          underline: { type: UnderlineType.SINGLE },
+          size: 26,
+          font: TNR,
+        })],
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 0, after: 120 },
+      }))
+
+      docChildren.push(new Paragraph({
+        children: [new TextRun({
+          text: `${docImages.length} imagen${docImages.length > 1 ? 'es' : ''} extraída${docImages.length > 1 ? 's' : ''} del paquete Hypal · Para referencia y respaldo`,
+          size: 17, font: TNR, color: '888888', italics: true,
+        })],
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 0, after: 400 },
+      }))
+
+      for (const img of docImages) {
+        // Filename caption
+        docChildren.push(new Paragraph({
+          children: [new TextRun({
+            text: img.filename,
+            size: 18, font: TNR, color: '666666', italics: true,
+          })],
+          spacing: { before: 240, after: 80 },
+        }))
+
+        try {
+          const imgBuffer = Buffer.from(img.data, 'base64')
+          // Auto-size: max width 500pt, proportional height estimate
+          docChildren.push(new Paragraph({
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            children: [(new ImageRun as any)({
+              data: imgBuffer,
+              transformation: { width: 500, height: 360 },
+            })],
+            spacing: { before: 0, after: 200 },
+          }))
+        } catch {
+          docChildren.push(new Paragraph({
+            children: [new TextRun({
+              text: `[Imagen no disponible: ${img.filename}]`,
+              size: 17, font: TNR, color: '999999',
+            })],
+            spacing: { before: 0, after: 200 },
+          }))
+        }
+      }
+    }
+
+/**
+ * ════════════════════════════════════════════════════════════════
+ * FIN DEL PATCH — después de este bloque viene el // ── BUILD ──
+ * ════════════════════════════════════════════════════════════════
+ */
 
     // ── BUILD ─────────────────────────────────────────────────────────────────
     const now = new Date()
