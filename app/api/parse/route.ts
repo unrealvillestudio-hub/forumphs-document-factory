@@ -5,7 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import type { ParseResponse } from '@/lib/types'
+import type { ParseResponse, ExtractedImage } from '@/lib/types'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -21,24 +21,31 @@ export async function POST(req: NextRequest): Promise<NextResponse<ParseResponse
       images?: Array<{ filename: string; data: string; type: string }>
     }
 
-    const { parseResumen }                  = await import('@/lib/parsers/parseResumen')
+    const { parseResumen }                     = await import('@/lib/parsers/parseResumen')
     const { parseAsistencia, parseVotaciones } = await import('@/lib/parsers/parseAsistencia')
-    const { parseTranscripcion }            = await import('@/lib/parsers/parseTranscripcion')
-    const { detectPreflightGaps }           = await import('@/lib/processors/preflightDetector')
+    const { parseTranscripcion }               = await import('@/lib/parsers/parseTranscripcion')
+    const { detectPreflightGaps }              = await import('@/lib/processors/preflightDetector')
 
-    const skeleton    = parseResumen(body.resumen || body.transcripcion)
-    const attendance  = parseAsistencia(body.asistencia_rows || [])
-    const votations   = parseVotaciones(body.votaciones_rows || [])
-    const debates     = parseTranscripcion(body.transcripcion || '')
-    const chatNotes   = (body.chats || '').split('\n').filter(l => l.trim().length > 20)
+    const skeleton   = parseResumen(body.resumen || body.transcripcion)
+    const attendance = parseAsistencia(body.asistencia_rows || [])
+    const votations  = parseVotaciones(body.votaciones_rows || [])
+    const debates    = parseTranscripcion(body.transcripcion || '')
+    const chatNotes  = (body.chats || '').split('\n').filter(l => l.trim().length > 20)
+
+    // FPH-016: type field arrives as generic string — coerce to union
+    const images: ExtractedImage[] = (body.images || []).map(img => ({
+      filename: img.filename,
+      data:     img.data,
+      type:     (img.type === 'image/png' ? 'image/png' : 'image/jpeg') as ExtractedImage['type'],
+    }))
 
     const parsed = {
       skeleton,
       attendance,
       votations,
       debates,
-      chat_notes:  chatNotes,
-      images:      body.images || [],   // ← FPH-016: pass images through
+      chat_notes: chatNotes,
+      images,
       raw_files: {
         resumen:       body.resumen       || '',
         transcripcion: body.transcripcion || '',
