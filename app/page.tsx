@@ -8,6 +8,7 @@ import ICRReportView from '@/components/ICRReport'
 import ICRResolution from '@/components/ICRResolution'
 import type { ICRReport } from '@/lib/types'
 import { createJob, updateJob, saveJobId, clearJobId } from '@/lib/supabaseSession'
+import { parseAgendaText } from '@/lib/processors/preflightDetector'  // ← FPH-014
 import type {
   ParsedHypalZip,
   PreflightGap,
@@ -90,28 +91,42 @@ export default function Home() {
   // ── Step 2: Pre-flight ────────────────────────────────────────────────────
   const handlePreflightSubmit = (answers: Record<string, string | number | boolean>, informe?: string) => {
     if (!parsed) return
+
     const pf: PreflightData = {
-      finca: answers.finca as string, codigo: answers.codigo as string,
+      finca: answers.finca as string,
+      codigo: answers.codigo as string,
       convocatoria_text: answers.convocatoria_text as string,
       has_informe_gestion: Boolean(answers.has_informe_gestion),
       informe_gestion_text: informe,
       confirmed_present_units: answers.confirmed_present_units as number,
       confirmed_time_end: answers.confirmed_time_end as string,
+      confirmed_agenda_items: (answers.confirmed_agenda_items as string) || '',
     }
     setPreflight(pf)
+
+    // ── FPH-014: parse confirmed agenda items → skeleton ──────────────────
+    const agendaItems = parseAgendaText(pf.confirmed_agenda_items || '')
+
     const updatedParsed: ParsedHypalZip = {
       ...parsed,
       skeleton: {
         ...parsed.skeleton,
-        ph_finca: pf.finca || parsed.skeleton.ph_finca,
-        ph_codigo: pf.codigo || parsed.skeleton.ph_codigo,
+        ph_finca:      pf.finca   || parsed.skeleton.ph_finca,
+        ph_codigo:     pf.codigo  || parsed.skeleton.ph_codigo,
         present_units: pf.confirmed_present_units || parsed.skeleton.present_units,
-        total_units: (answers.total_units as number) || parsed.skeleton.total_units,  // ← fix
-        time_end: pf.confirmed_time_end || parsed.skeleton.time_end,
+        total_units:   (answers.total_units as number) || parsed.skeleton.total_units,
+        time_end:      pf.confirmed_time_end || parsed.skeleton.time_end,
+        // ← FPH-014: use confirmed agenda items if provided, else keep parsed
+        agenda_items:  agendaItems.length > 0 ? agendaItems : parsed.skeleton.agenda_items,
+        // Update names from preflight if provided
+        president_name: (answers.president_name as string) || parsed.skeleton.president_name,
+        secretary_name: (answers.secretary_name as string) || parsed.skeleton.secretary_name,
       },
     }
     setParsed(updatedParsed)
-    setBlocksToFormalize(parsed.debates.filter(b => !b.skip))
+
+    const toFormalize = parsed.debates.filter(b => !b.skip)
+    setBlocksToFormalize(toFormalize)
     if (jobId) updateJob(jobId, { stage: 'formalizing', preflight: pf })
     setStep('formalizing')
   }
@@ -141,7 +156,9 @@ export default function Home() {
       if (!data.success) throw new Error(data.error || 'Error al generar el acta')
       if (jobId) updateJob(jobId, { stage: 'done' as any, qa_report: data.qa_report, output_filename: data.filename })
       setOutput({ docx_base64: data.docx_base64, filename: data.filename, word_count: data.word_count, qa_report: data.qa_report, acta_text: data.acta_text })
+
       if (opts?.skipToDownload) { setStep('done'); return }
+
       const formalizedPct = data.qa_report?.formalized_pct ?? 0
       if (formalizedPct < 70 && autoRetryRef.current < 2) setOfferRetryBanner(true)
       setStep('qa')
@@ -172,7 +189,7 @@ export default function Home() {
     triggerDownload(output.docx_base64, output.filename)
   }
 
-  // ── Download annotated (with ICR findings embedded) ───────────────────────
+  // ── Download annotated ────────────────────────────────────────────────────
   const handleDownloadAnnotated = async () => {
     if (!parsed || !preflight || !icrReport) return
     setLoadingAnnotated(true)
@@ -180,10 +197,9 @@ export default function Home() {
       const res = await fetch('/api/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          parsed, preflight,
-          formalizedBlocks,
+          parsed, preflight, formalizedBlocks,
           retry_attempt: autoRetryRef.current,
-          icr_findings: icrReport.findings, // ← triggers inline banners + annex page
+          icr_findings: icrReport.findings,
         }),
       })
       const data = await res.json()
@@ -367,15 +383,12 @@ export default function Home() {
           />
         )}
 
-        {/* ── Download bar — ONLY on step 'done' ───────────────────────── */}
+        {/* Download bar — ONLY on step done */}
         {step === 'done' && output && (
           <div style={{ marginTop: 24, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' as const }}>
-            {/* Clean download */}
             <button className="df-btn-primary" onClick={handleDownload} style={{ padding: '12px 32px', fontSize: 15 }}>
               ⬇ Descargar .docx
             </button>
-
-            {/* Annotated download — only when ICR found issues */}
             {icrReport && icrReport.findings.length > 0 && (
               <button
                 className="df-btn-ghost"
@@ -393,16 +406,15 @@ export default function Home() {
                 )}
               </button>
             )}
-
             <button className="df-btn-ghost" onClick={handleReset}>↺ Nueva acta</button>
           </div>
         )}
 
-        {/* ICR loading bar — shown while auditing, no download yet */}
+        {/* ICR loading bar */}
         {step === 'icr' && icrLoading && (
           <div style={{ marginTop: 24, display: 'flex', alignItems: 'center', gap: 10, padding: '12px 24px', borderRadius: 10, background: 'rgba(92,52,114,0.1)', border: '1px solid rgba(92,52,114,0.25)' }}>
             <div style={{ width: 18, height: 18, border: '2px solid rgba(92,52,114,0.3)', borderTop: '2px solid var(--amatista)', borderRadius: '50%', animation: 'spin-slow 1s linear infinite' }} />
-            <span style={{ color: 'var(--amatista-light)', fontSize: 14 }}>ICR auditando el documento — descarga disponible al terminar…</span>
+            <span style={{ color: 'var(--amatista-light)', fontSize: 14 }}>ICR auditando — descarga disponible al terminar…</span>
           </div>
         )}
 

@@ -4,7 +4,7 @@
  * and generates the gaps list for the user to fill in.
  */
 
-import type { ParsedHypalZip, PreflightGap } from '../types'
+import type { ParsedHypalZip, PreflightGap, AgendaItem } from '../types'
 
 export function detectPreflightGaps(parsed: ParsedHypalZip): PreflightGap[] {
   const gaps: PreflightGap[] = []
@@ -51,6 +51,22 @@ export function detectPreflightGaps(parsed: ParsedHypalZip): PreflightGap[] {
     value: false,
   })
 
+  // 4b. Agenda items — ALWAYS show for confirmation/edit
+  // Pre-populate with parsed items so Ivette can verify and complete
+  const parsedAgendaText = s.agenda_items.length > 0
+    ? s.agenda_items.map(i => `${i.number}. ${i.title}`).join('\n')
+    : ''
+  gaps.push({
+    field: 'confirmed_agenda_items',
+    label: 'Orden del Día — verificar y completar',
+    description: s.agenda_items.length > 0
+      ? `Se detectaron ${s.agenda_items.length} punto(s). Verifica que estén todos y agrega los que falten (uno por línea, ej: "3. Informe de Gestión")`
+      : 'No se detectaron puntos del orden del día. Ingresalos manualmente (uno por línea, ej: "1. Verificación del quórum")',
+    required: false,
+    type: 'textarea',
+    value: parsedAgendaText,
+  })
+
   // 5. Confirmed present units (Hypal snapshot vs session-verified)
   gaps.push({
     field: 'confirmed_present_units',
@@ -65,7 +81,7 @@ export function detectPreflightGaps(parsed: ParsedHypalZip): PreflightGap[] {
   if (!s.total_units || s.total_units === 0) {
     gaps.push({
       field: 'total_units',
-      label: 'Total de unidades del PH',
+      label: 'Total de unidades del PH *',
       description: 'Número total de unidades inmobiliarias que conforman el PH (ej: 274)',
       required: true,
       type: 'number',
@@ -116,6 +132,22 @@ export function detectPreflightGaps(parsed: ParsedHypalZip): PreflightGap[] {
   return gaps
 }
 
+// Parse "1. Item\n2. Item\n..." → AgendaItem[]
+export function parseAgendaText(text: string): AgendaItem[] {
+  if (!text || !text.trim()) return []
+  return text
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean)
+    .map((l, idx) => {
+      const m = l.match(/^(\d+)[.)]\s+(.+)/)
+      if (m) return { number: parseInt(m[1]), title: m[2].trim() }
+      // Line without number — auto-assign
+      return { number: idx + 1, title: l.replace(/^[-•*]\s*/, '').trim() }
+    })
+    .filter(item => item.title.length > 0)
+}
+
 export function applyPreflightAnswers(
   parsed: ParsedHypalZip,
   answers: Record<string, string | number | boolean>
@@ -138,6 +170,11 @@ export function applyPreflightAnswers(
   }
   if (answers.secretary_name) {
     updated.skeleton.secretary_name = String(answers.secretary_name)
+  }
+  // Parse and apply confirmed agenda items
+  if (answers.confirmed_agenda_items) {
+    const items = parseAgendaText(String(answers.confirmed_agenda_items))
+    if (items.length > 0) updated.skeleton.agenda_items = items
   }
 
   return updated
