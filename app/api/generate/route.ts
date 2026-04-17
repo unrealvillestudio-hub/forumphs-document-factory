@@ -1,6 +1,8 @@
 /**
  * /api/generate/route.ts — v3
- * DOCX generation + ICR annotations (inline banners + annex page)
+ * Changes vs v2:
+ * - sectionTitle(): removed number prefix (Ivette canonical format)
+ * - ICR inline annotations support (banners + annex page)
  */
 import { NextRequest, NextResponse } from 'next/server'
 import type { GenerateResponse, ParsedHypalZip, PreflightData, DebateBlock, VotationRecord } from '@/lib/types'
@@ -8,18 +10,17 @@ import type { GenerateResponse, ParsedHypalZip, PreflightData, DebateBlock, Vota
 export const runtime = 'nodejs'
 export const maxDuration = 120
 
-// ── ICR types (local — mirrors lib/types ICRFinding) ─────────────────────────
+// ── ICR types ─────────────────────────────────────────────────────────────────
 interface ICRFinding {
   id?: string
   severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
   category?: string
-  location: string   // canonical field name per /api/icr/route.ts
-  section?: string   // alias — tolerated if present
+  location: string
+  section?: string
   issue?: string
   suggestion?: string
 }
 
-// ── ICR severity config ───────────────────────────────────────────────────────
 const SEV_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const
 const ICR_COLORS: Record<string, { bg: string; accent: string; label: string }> = {
   CRITICAL: { bg: 'FFD7D7', accent: 'FF4444', label: '⚠  CRÍTICO' },
@@ -29,9 +30,7 @@ const ICR_COLORS: Record<string, { bg: string; accent: string; label: string }> 
 }
 
 function getWorstSev(findings: ICRFinding[]): string {
-  for (const s of SEV_ORDER) {
-    if (findings.some(f => f.severity === s)) return s
-  }
+  for (const s of SEV_ORDER) { if (findings.some(f => f.severity === s)) return s }
   return 'LOW'
 }
 
@@ -76,7 +75,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       formalizedBlocks: DebateBlock[]
     } = body
 
-    // ICR findings (optional — present when downloading annotated version)
     const icrFindings: ICRFinding[] = body.icr_findings || []
 
     const {
@@ -88,19 +86,19 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     const { buildActaText }          = await import('@/lib/generators/actaBuilder')
     const { runQAScan }              = await import('@/lib/processors/qaScanner')
 
-    const s          = parsed.skeleton
-    const phName     = s.ph_name || 'PH'
-    const actaNum    = s.acta_number || '1'
-    const year       = new Date().getFullYear()
-    const typeLabel  = s.assembly_type === 'EXTRAORDINARIA' ? 'ASAMBLEA EXTRAORDINARIA' : 'ASAMBLEA ORDINARIA'
-    const typeCode   = s.assembly_type === 'EXTRAORDINARIA' ? 'EX' : 'OR'
-    const finca      = preflight.finca || s.ph_finca || '[FINCA PENDIENTE]'
-    const codigo     = preflight.codigo || s.ph_codigo || '[CÓDIGO PENDIENTE]'
+    const s            = parsed.skeleton
+    const phName       = s.ph_name || 'PH'
+    const actaNum      = s.acta_number || '1'
+    const year         = new Date().getFullYear()
+    const typeLabel    = s.assembly_type === 'EXTRAORDINARIA' ? 'ASAMBLEA EXTRAORDINARIA' : 'ASAMBLEA ORDINARIA'
+    const typeCode     = s.assembly_type === 'EXTRAORDINARIA' ? 'EX' : 'OR'
+    const finca        = preflight.finca || s.ph_finca || '[FINCA PENDIENTE]'
+    const codigo       = preflight.codigo || s.ph_codigo || '[CÓDIGO PENDIENTE]'
     const presentUnits = preflight.confirmed_present_units ?? s.present_units ?? parsed.attendance.length
     const totalUnits   = s.total_units || 0
     const timeEnd      = preflight.confirmed_time_end || s.time_end || '[HORA FIN]'
 
-    const assignedBlocks = assignBlocksToSections(formalizedBlocks, s.agenda_items)
+    const assignedBlocks       = assignBlocksToSections(formalizedBlocks, s.agenda_items)
     const hasFirstCallNoQuorum = detectFirstCallNoQuorum(parsed.raw_files['transcripcion'] || '')
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -124,10 +122,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         spacing: { before: opts.before ?? 120, after: 120, line: 276 },
       })
 
-    const sectionTitle = (num: number | undefined, title: string) =>
+    // ── sectionTitle — NO number prefix (Ivette canonical) ───────────────────
+    const sectionTitle = (_num: number | undefined, title: string) =>
       new Paragraph({
         children: [
-          new TextRun({ text: num ? `${num}.  ` : '', bold: true, size: 22, font: TNR }),
           new TextRun({ text: title, bold: true, underline: { type: UnderlineType.SINGLE }, size: 22, font: TNR }),
         ],
         spacing: { before: 360, after: 160 },
@@ -144,7 +142,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
 
     const emptyLine = () => new Paragraph({ children: [new TextRun({ text: '', size: 22, font: TNR })] })
 
-    // ── ICR inline banner helper ──────────────────────────────────────────────
+    // ── ICR inline banner ─────────────────────────────────────────────────────
     const icrSectionBanner = (sFindings: ICRFinding[]) => {
       if (sFindings.length === 0) return null
       const worst = getWorstSev(sFindings)
@@ -165,22 +163,18 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     // ── TITLE ─────────────────────────────────────────────────────────────────
     docChildren.push(new Paragraph({
       children: [new TextRun({ text: `ACTA No_${actaNum}-${year}`, bold: true, underline: { type: UnderlineType.SINGLE }, size: 28, font: TNR })],
-      alignment: AlignmentType.CENTER,
-      spacing: { before: 0, after: 240 },
+      alignment: AlignmentType.CENTER, spacing: { before: 0, after: 240 },
     }))
     docChildren.push(new Paragraph({
       children: [new TextRun({ text: `${typeLabel} DE PROPIETARIOS DEL ${phName}`, bold: true, size: 24, font: TNR })],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 160 },
+      alignment: AlignmentType.CENTER, spacing: { after: 160 },
     }))
     docChildren.push(new Paragraph({
       children: [new TextRun({ text: s.date_str, bold: true, size: 24, font: TNR })],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 360 },
+      alignment: AlignmentType.CENTER, spacing: { after: 360 },
     }))
 
     // ── INTRO ─────────────────────────────────────────────────────────────────
-    // Header-level ICR findings banner (encabezado)
     if (icrFindings.length > 0) {
       const headerFindings = icrFindings.filter(f => {
         const ref = (f.location || f.section || '').toLowerCase()
@@ -205,15 +199,12 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
 
     // ── SECTION 1: QUORUM ─────────────────────────────────────────────────────
     docChildren.push(sectionTitle(1, 'VERIFICACIÓN DEL QUORUM'))
-
-    // ICR banner for section 1
     if (icrFindings.length > 0) {
-      const s1findings = findingsForSection(icrFindings, 1)
-      const banner = icrSectionBanner(s1findings)
+      const banner = icrSectionBanner(findingsForSection(icrFindings, 1))
       if (banner) docChildren.push(banner)
     }
 
-    const pct      = totalUnits > 0 ? ((presentUnits / totalUnits) * 100).toFixed(2) : '0'
+    const pct       = totalUnits > 0 ? ((presentUnits / totalUnits) * 100).toFixed(2) : '0'
     const minQuorum = Math.floor(totalUnits / 2) + 1
 
     if (hasFirstCallNoQuorum) {
@@ -289,16 +280,11 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       for (const item of agendaItems) {
         const displayNum = item.number + sectionOffset
         docChildren.push(sectionTitle(displayNum, item.title.toUpperCase()))
-
-        // ICR inline banner for this agenda section
         if (icrFindings.length > 0) {
           const banner = icrSectionBanner(findingsForSection(icrFindings, item.number))
           if (banner) docChildren.push(banner)
         }
-
-        const sectionBlocks = assignedBlocks.filter(
-          b => b.agenda_section === item.number && !b.skip && b.text_formal
-        )
+        const sectionBlocks = assignedBlocks.filter(b => b.agenda_section === item.number && !b.skip && b.text_formal)
         if (sectionBlocks.length === 0 && item === agendaItems[0]) {
           const unassigned = assignedBlocks.filter(b => !b.skip && b.text_formal && !b.agenda_section)
           for (const block of unassigned) {
@@ -309,7 +295,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
             if (block.text_formal) docChildren.push(normal(block.text_formal, { before: 200 }))
           }
         }
-
         const sectionVotes = votesBySectionMap.get(item.number) || []
         for (const vote of sectionVotes) {
           docChildren.push(normal(`Se sometió a votación ${vote.topic}. Los resultados fueron los siguientes:`))
@@ -358,7 +343,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     docChildren.push(emptyLine())
     docChildren.push(emptyLine())
 
-    // Signature block
+    // ── SIGNATURES ───────────────────────────────────────────────────────────
     const presName = s.president_name?.toUpperCase() || '[NOMBRE PRESIDENTE/A]'
     const secName  = s.secretary_name?.toUpperCase()  || '[NOMBRE SECRETARIO/A]'
     const LINE     = '_'.repeat(46)
@@ -379,58 +364,38 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     })
     docChildren.push(new Table({
       rows: [sigRow(LINE, LINE), sigRow(presName, secName, true), sigRow('PRESIDENTE/A', 'SECRETARIO/A', true)],
-      width: { size: 9360, type: WidthType.DXA },
-      columnWidths: [4680, 4680],
+      width: { size: 9360, type: WidthType.DXA }, columnWidths: [4680, 4680],
     }))
 
-    // ── ICR ANNEX (only when icr_findings provided) ───────────────────────────
+    // ── ICR ANNEX ─────────────────────────────────────────────────────────────
     if (icrFindings.length > 0) {
-      // Page break
       docChildren.push(new Paragraph({
         children: [new TextRun({ text: '', size: 22, font: TNR })],
-        pageBreakBefore: true,
-        spacing: { before: 0, after: 0 },
+        pageBreakBefore: true, spacing: { before: 0, after: 0 },
       }))
-
-      // Annex header
       docChildren.push(new Paragraph({
-        children: [new TextRun({
-          text: 'ANEXO ICR — REVISIÓN DE CONSISTENCIA LEGAL',
-          bold: true, underline: { type: UnderlineType.SINGLE }, size: 26, font: TNR,
-        })],
-        alignment: AlignmentType.CENTER,
-        spacing: { before: 0, after: 120 },
+        children: [new TextRun({ text: 'ANEXO ICR — REVISIÓN DE CONSISTENCIA LEGAL', bold: true, underline: { type: UnderlineType.SINGLE }, size: 26, font: TNR })],
+        alignment: AlignmentType.CENTER, spacing: { before: 0, after: 120 },
       }))
       docChildren.push(new Paragraph({
         children: [new TextRun({
           text: `ForumPHs Document Factory  ·  ${icrFindings.length} hallazgo${icrFindings.length > 1 ? 's' : ''} detectados  ·  Para uso interno — no forma parte del acta oficial`,
           size: 17, font: TNR, color: '888888', italics: true,
         })],
-        alignment: AlignmentType.CENTER,
-        spacing: { before: 0, after: 400 },
+        alignment: AlignmentType.CENTER, spacing: { before: 0, after: 400 },
       }))
 
-      // Finding cards — sorted by severity
-      const sortedFindings = [...icrFindings].sort(
-        (a, b) => SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity)
-      )
+      const sortedFindings = [...icrFindings].sort((a, b) => SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity))
 
       for (const finding of sortedFindings) {
         const col = ICR_COLORS[finding.severity] || ICR_COLORS.LOW
         const noBorder = { style: BorderStyle.NONE, size: 0, color: 'auto' }
-
         docChildren.push(new Table({
           rows: [new TableRow({
             children: [new TableCell({
               shading: { type: ShadingType.CLEAR, fill: col.bg, color: col.bg },
-              borders: {
-                left:   { style: BorderStyle.THICK, size: 12, color: col.accent },
-                top:    noBorder,
-                bottom: noBorder,
-                right:  noBorder,
-              },
+              borders: { left: { style: BorderStyle.THICK, size: 12, color: col.accent }, top: noBorder, bottom: noBorder, right: noBorder },
               children: [
-                // Severity + category
                 new Paragraph({
                   children: [
                     new TextRun({ text: col.label + '  ·  ', bold: true, size: 20, font: TNR, color: '111111' }),
@@ -438,17 +403,14 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
                   ],
                   spacing: { before: 140, after: 60 },
                 }),
-                // Location ref
                 new Paragraph({
                   children: [new TextRun({ text: finding.location || finding.section || '', size: 17, font: TNR, color: '666666', italics: true })],
                   spacing: { before: 0, after: 100 },
                 }),
-                // Issue
                 new Paragraph({
                   children: [new TextRun({ text: finding.issue || '', size: 20, font: TNR, color: '111111' })],
                   spacing: { before: 0, after: 100 },
                 }),
-                // Suggestion
                 new Paragraph({
                   children: [new TextRun({ text: '→  ' + (finding.suggestion || ''), size: 18, font: TNR, color: '444444' })],
                   spacing: { before: 0, after: 140 },
@@ -456,44 +418,38 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
               ],
             })],
           })],
-          width: { size: 9360, type: WidthType.DXA },
-          columnWidths: [9360],
+          width: { size: 9360, type: WidthType.DXA }, columnWidths: [9360],
         }))
         docChildren.push(emptyLine())
       }
     }
 
-    // ── BUILD DOCUMENT ────────────────────────────────────────────────────────
+    // ── BUILD ─────────────────────────────────────────────────────────────────
     const now = new Date()
     const footerLabel = `Generado por Document Factory · ForumPHs · v1.4 · ${now.toLocaleDateString('es-PA')}`
 
     const doc = new Document({
       sections: [{
-        properties: {
-          page: { margin: { top: 1440, right: 1440, bottom: 1800, left: 1440 } },
-        },
+        properties: { page: { margin: { top: 1440, right: 1440, bottom: 1800, left: 1440 } } },
         footers: {
           default: new Footer({
-            children: [
-              new Paragraph({
-                children: [new TextRun({ text: footerLabel, size: 16, color: '888888', font: 'Arial' })],
-                alignment: AlignmentType.CENTER,
-              }),
-            ],
+            children: [new Paragraph({
+              children: [new TextRun({ text: footerLabel, size: 16, color: '888888', font: 'Arial' })],
+              alignment: AlignmentType.CENTER,
+            })],
           }),
         },
         children: docChildren,
       }],
     })
 
-    const buffer   = await Packer.toBuffer(doc)
-    const base64   = buffer.toString('base64')
-    const actaText = buildActaText(parsed, preflight, assignedBlocks)
+    const buffer    = await Packer.toBuffer(doc)
+    const base64    = buffer.toString('base64')
+    const actaText  = buildActaText(parsed, preflight, assignedBlocks)
     const qa_report = runQAScan(actaText, parsed, assignedBlocks)
-
-    const slug     = phName.replace(/[^A-Z0-9]/gi, '_').toUpperCase().replace(/_+/g, '_').replace(/^_|_$/g, '')
+    const slug      = phName.replace(/[^A-Z0-9]/gi, '_').toUpperCase().replace(/_+/g, '_').replace(/^_|_$/g, '')
     const annotatedSuffix = icrFindings.length > 0 ? '_ICR' : ''
-    const filename = `ACTA_${typeCode}_${actaNum}-${year}_${slug}_df_v1${annotatedSuffix}.docx`
+    const filename  = `ACTA_${typeCode}_${actaNum}-${year}_${slug}_df_v1${annotatedSuffix}.docx`
     const wordCount = actaText.split(/\s+/).length
 
     return NextResponse.json({ success: true, docx_base64: base64, filename, word_count: wordCount, qa_report, acta_text: actaText })
