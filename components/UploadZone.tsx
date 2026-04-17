@@ -85,10 +85,7 @@ export default function UploadZone({ onDataReady, loading }: UploadZoneProps) {
 
       {/* ── Product header ─────────────────────────────────────────────── */}
       <div style={{ marginBottom: 44, textAlign: 'center' }}>
-        <div style={{ marginBottom: 24 }}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/FPHS_logo-wt.png" alt="ForumPHs" style={{ height: 28, width: 'auto', opacity: 0.85, marginBottom: 16 }} />
-        </div>
+
         <div style={{ position: 'relative', marginBottom: 14 }}>
           <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse 60% 50% at 50% 60%, rgba(92,52,114,0.18) 0%, transparent 70%)', pointerEvents: 'none' }} />
           <div style={{ position: 'relative' }}>
