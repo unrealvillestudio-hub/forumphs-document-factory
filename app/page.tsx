@@ -8,7 +8,7 @@ import ICRReportView from '@/components/ICRReport'
 import ICRResolution from '@/components/ICRResolution'
 import type { ICRReport } from '@/lib/types'
 import { createJob, updateJob, saveJobId, clearJobId } from '@/lib/supabaseSession'
-import { parseAgendaText } from '@/lib/processors/preflightDetector'  // ← FPH-014
+import { parseAgendaText } from '@/lib/processors/preflightDetector'
 import type {
   ParsedHypalZip,
   PreflightGap,
@@ -16,9 +16,7 @@ import type {
   DebateBlock,
   QAReport,
 } from '@/lib/types'
-
 type Step = 'upload' | 'preflight' | 'formalizing' | 'generating' | 'qa' | 'icr' | 'icr-resolution' | 'done' | 'error'
-
 interface DocOutput {
   docx_base64: string
   filename: string
@@ -26,7 +24,6 @@ interface DocOutput {
   qa_report: QAReport
   acta_text?: string
 }
-
 const STEPS = [
   { id: 'upload',         label: 'ZIP'      },
   { id: 'preflight',      label: 'Pre-flight'},
@@ -37,8 +34,6 @@ const STEPS = [
   { id: 'icr-resolution', label: 'Revision' },
   { id: 'done',           label: 'Descarga' },
 ]
-
-// ── UNRLVL animated signature — BP_BRAND_v1.2 canonical ──────────────────────
 function UnrlvlSig({ size = 11 }: { size?: number }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 0 }}>
@@ -49,7 +44,6 @@ function UnrlvlSig({ size = 11 }: { size?: number }) {
     </span>
   )
 }
-
 export default function Home() {
   const [step, setStep] = useState<Step>('upload')
   const [uploading, setUploading] = useState(false)
@@ -68,9 +62,7 @@ export default function Home() {
   const [generating, setGenerating] = useState(false)
   const [jobId, setJobId] = useState<string | null>(null)
 
-  // ── Step 1: Upload & Parse ZIP ────────────────────────────────────────────
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const handleFileSelected = async (extracted: any) => {
+  const handleFileSelected = async (extracted: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
     setUploading(true); setError(null)
     try {
       const res = await fetch('/api/parse', {
@@ -88,10 +80,8 @@ export default function Home() {
     } finally { setUploading(false) }
   }
 
-  // ── Step 2: Pre-flight ────────────────────────────────────────────────────
   const handlePreflightSubmit = (answers: Record<string, string | number | boolean>, informe?: string) => {
     if (!parsed) return
-
     const pf: PreflightData = {
       finca: answers.finca as string,
       codigo: answers.codigo as string,
@@ -103,43 +93,35 @@ export default function Home() {
       confirmed_agenda_items: (answers.confirmed_agenda_items as string) || '',
     }
     setPreflight(pf)
-
-    // ── FPH-014: parse confirmed agenda items → skeleton ──────────────────
     const agendaItems = parseAgendaText(pf.confirmed_agenda_items || '')
-
     const updatedParsed: ParsedHypalZip = {
       ...parsed,
       skeleton: {
         ...parsed.skeleton,
-        ph_finca:      pf.finca   || parsed.skeleton.ph_finca,
-        ph_codigo:     pf.codigo  || parsed.skeleton.ph_codigo,
-        present_units: pf.confirmed_present_units || parsed.skeleton.present_units,
-        total_units:   (answers.total_units as number) || parsed.skeleton.total_units,
-        time_end:      pf.confirmed_time_end || parsed.skeleton.time_end,
-        // ← FPH-014: use confirmed agenda items if provided, else keep parsed
-        agenda_items:  agendaItems.length > 0 ? agendaItems : parsed.skeleton.agenda_items,
-        // Update names from preflight if provided
+        ph_finca:       pf.finca   || parsed.skeleton.ph_finca,
+        ph_codigo:      pf.codigo  || parsed.skeleton.ph_codigo,
+        present_units:  pf.confirmed_present_units || parsed.skeleton.present_units,
+        total_units:    (answers.total_units as number) || parsed.skeleton.total_units,
+        time_end:       pf.confirmed_time_end || parsed.skeleton.time_end,
+        agenda_items:   agendaItems.length > 0 ? agendaItems : parsed.skeleton.agenda_items,
         president_name: (answers.president_name as string) || parsed.skeleton.president_name,
         secretary_name: (answers.secretary_name as string) || parsed.skeleton.secretary_name,
       },
     }
     setParsed(updatedParsed)
-
     const toFormalize = parsed.debates.filter(b => !b.skip)
     setBlocksToFormalize(toFormalize)
     if (jobId) updateJob(jobId, { stage: 'formalizing', preflight: pf })
     setStep('formalizing')
   }
 
-  // ── Step 3: Formalization complete ────────────────────────────────────────
   const handleFormalizationComplete = async (blocks: DebateBlock[]) => {
     setFormalizedBlocks(blocks)
-    if (jobId) updateJob(jobId, { stage: 'generating' as any, formalized_blocks: blocks })
+    if (jobId) updateJob(jobId, { stage: 'generating' as any, formalized_blocks: blocks }) // eslint-disable-line @typescript-eslint/no-explicit-any
     setStep('generating')
     await generateDocx(blocks)
   }
 
-  // ── Step 4: Generate DOCX ─────────────────────────────────────────────────
   const generateDocx = async (blocks?: DebateBlock[], opts?: { skipToDownload?: boolean }) => {
     if (!parsed || !preflight) return
     setGenerating(true); setError(null)
@@ -154,11 +136,9 @@ export default function Home() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.error || 'Error al generar el acta')
-      if (jobId) updateJob(jobId, { stage: 'done' as any, qa_report: data.qa_report, output_filename: data.filename })
+      if (jobId) updateJob(jobId, { stage: 'done' as any, qa_report: data.qa_report, output_filename: data.filename }) // eslint-disable-line @typescript-eslint/no-explicit-any
       setOutput({ docx_base64: data.docx_base64, filename: data.filename, word_count: data.word_count, qa_report: data.qa_report, acta_text: data.acta_text })
-
       if (opts?.skipToDownload) { setStep('done'); return }
-
       const formalizedPct = data.qa_report?.formalized_pct ?? 0
       if (formalizedPct < 70 && autoRetryRef.current < 2) setOfferRetryBanner(true)
       setStep('qa')
@@ -167,7 +147,6 @@ export default function Home() {
     } finally { setGenerating(false) }
   }
 
-  // ── ICR (user-triggered) ─────────────────────────────────────────────────
   const runICR = async () => {
     if (!output || !parsed) { setStep('icr'); return }
     setIcrLoading(true); setStep('icr')
@@ -183,24 +162,15 @@ export default function Home() {
     finally { clearTimeout(timeout); setIcrLoading(false) }
   }
 
-  // ── Download clean ────────────────────────────────────────────────────────
-  const handleDownload = () => {
-    if (!output) return
-    triggerDownload(output.docx_base64, output.filename)
-  }
+  const handleDownload = () => { if (output) triggerDownload(output.docx_base64, output.filename) }
 
-  // ── Download annotated ────────────────────────────────────────────────────
   const handleDownloadAnnotated = async () => {
     if (!parsed || !preflight || !icrReport) return
     setLoadingAnnotated(true)
     try {
       const res = await fetch('/api/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          parsed, preflight, formalizedBlocks,
-          retry_attempt: autoRetryRef.current,
-          icr_findings: icrReport.findings,
-        }),
+        body: JSON.stringify({ parsed, preflight, formalizedBlocks, retry_attempt: autoRetryRef.current, icr_findings: icrReport.findings }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.error || 'Error al generar versión anotada')
@@ -210,19 +180,14 @@ export default function Home() {
     } finally { setLoadingAnnotated(false) }
   }
 
-  // ── Shared download trigger ───────────────────────────────────────────────
   const triggerDownload = (base64: string, filename: string) => {
-    const bytes = atob(base64)
-    const arr   = new Uint8Array(bytes.length)
+    const bytes = atob(base64); const arr = new Uint8Array(bytes.length)
     for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i)
-    const blob  = new Blob([arr], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })
-    const url   = URL.createObjectURL(blob)
-    const a     = document.createElement('a')
-    a.href = url; a.download = filename; a.click()
-    URL.revokeObjectURL(url)
+    const blob = new Blob([arr], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })
+    const url = URL.createObjectURL(blob); const a = document.createElement('a')
+    a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url)
   }
 
-  // ── Reset ─────────────────────────────────────────────────────────────────
   const handleReset = () => {
     setStep('upload'); clearJobId(); setJobId(null); setParsed(null)
     setIcrReport(null); setIcrLoading(false); autoRetryRef.current = 0
@@ -235,8 +200,6 @@ export default function Home() {
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--carbon)' }}>
-
-      {/* Keyframes — BP_BRAND_v1.2 */}
       <style>{`
         @keyframes chev-listen {
           0%,45%  { opacity: 1; }
@@ -245,21 +208,13 @@ export default function Home() {
         }
       `}</style>
 
-      {/* ── Top bar ─────────────────────────────────────────────────────── */}
-      <div style={{
-        position: 'sticky', top: 0, zIndex: 100,
-        background: 'rgba(28,34,51,0.95)', backdropFilter: 'blur(12px)',
-        borderBottom: '1px solid rgba(92,52,114,0.2)',
-        padding: '0 32px', height: 56,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      }}>
+      {/* Top bar */}
+      <div style={{ position: 'sticky', top: 0, zIndex: 100, background: 'rgba(28,34,51,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(92,52,114,0.2)', padding: '0 32px', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/FPHS_logo-wt.png" alt="ForumPHs" style={{ height: 20, width: 'auto' }} />
           <span style={{ color: 'rgba(200,196,190,0.2)', fontSize: 12 }}>·</span>
-          <span style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 11, fontWeight: 500, letterSpacing: '0.1em', textTransform: 'uppercase' as const, color: 'rgba(200,196,190,0.4)' }}>
-            Document Factory
-          </span>
+          <span style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 11, fontWeight: 500, letterSpacing: '0.1em', textTransform: 'uppercase' as const, color: 'rgba(200,196,190,0.4)' }}>Document Factory</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           {STEPS.map((s, i) => {
@@ -277,19 +232,46 @@ export default function Home() {
         </div>
       </div>
 
-      {/* ── Main content ────────────────────────────────────────────────── */}
+      {/* Main content */}
       <div style={{ maxWidth: 800, margin: '0 auto', padding: '48px 32px' }}>
 
         {step === 'upload' && <UploadZone onDataReady={handleFileSelected} loading={uploading} />}
 
         {step === 'preflight' && parsed && <PreflightForm gaps={gaps} parsed={parsed} onSubmit={handlePreflightSubmit} />}
 
+        {/* ── Paso 0.5: bloques detectados ── */}
         {step === 'formalizing' && blocksToFormalize.length > 0 && (
           <ProcessingPipeline
             key={`pipeline-${autoRetryRef.current}`}
             blocks={blocksToFormalize} skeleton={parsed?.skeleton}
             onComplete={handleFormalizationComplete} retryAttempt={autoRetryRef.current}
           />
+        )}
+
+        {/* ── Paso 0.5: sin bloques — transcripción vacía ── */}
+        {step === 'formalizing' && blocksToFormalize.length === 0 && (
+          <div className="fade-in" style={{ textAlign: 'center', padding: '64px 0' }}>
+            <div style={{ fontSize: 48, marginBottom: 20 }}>⚠️</div>
+            <h2 style={{ fontFamily: 'EB Garamond, serif', fontSize: 28, color: 'var(--terra)', fontWeight: 400, margin: '0 0 12px' }}>
+              Transcripción no detectada
+            </h2>
+            <p style={{ color: 'var(--parch-dim)', fontSize: 14, maxWidth: 420, margin: '0 auto 8px' }}>
+              El ZIP no contiene un archivo de transcripción reconocible, o todos los bloques fueron descartados.
+            </p>
+            <p style={{ color: 'rgba(200,196,190,0.35)', fontSize: 12, maxWidth: 420, margin: '0 auto 32px' }}>
+              Verifica que el ZIP incluya el archivo de transcripción de Hypal (normalmente llamado Transcripci… o Recording…).
+            </p>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+              <button
+                className="df-btn-primary"
+                onClick={() => { setStep('generating'); generateDocx([]) }}
+                style={{ padding: '12px 28px', fontSize: 14 }}
+              >
+                Generar acta sin transcripción
+              </button>
+              <button className="df-btn-ghost" onClick={handleReset}>↺ Subir otro ZIP</button>
+            </div>
+          </div>
         )}
 
         {step === 'generating' && (
@@ -310,26 +292,16 @@ export default function Home() {
             {step === 'qa' && offerRetryBanner && (
               <div style={{ background: 'rgba(92,52,114,0.08)', border: '1px solid rgba(92,52,114,0.25)', borderRadius: 10, padding: '14px 20px', marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--amatista-light)', marginBottom: 3 }}>
-                    Cobertura al {output.qa_report?.formalized_pct ?? 0}% — ¿hacemos un barrido más?
-                  </div>
-                  <div style={{ fontSize: 12, color: 'var(--parch-dim)' }}>
-                    {autoRetryRef.current === 0 ? '2º barrido — agentes re-procesan con +10% de tolerancia' : '3er barrido — +10% adicional de tolerancia'}
-                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--amatista-light)', marginBottom: 3 }}>Cobertura al {output.qa_report?.formalized_pct ?? 0}% — ¿hacemos un barrido más?</div>
+                  <div style={{ fontSize: 12, color: 'var(--parch-dim)' }}>{autoRetryRef.current === 0 ? '2º barrido — agentes re-procesan con +10% de tolerancia' : '3er barrido — +10% adicional de tolerancia'}</div>
                 </div>
                 <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
-                  <button
-                    style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--amatista)', color: '#fff', fontSize: 12, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif', fontWeight: 600 }}
-                    onClick={() => { setOfferRetryBanner(false); autoRetryRef.current += 1; setFormalizedBlocks([]); setStep('formalizing') }}
-                  >
+                  <button style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--amatista)', color: '#fff', fontSize: 12, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif', fontWeight: 600 }}
+                    onClick={() => { setOfferRetryBanner(false); autoRetryRef.current += 1; setFormalizedBlocks([]); setStep('formalizing') }}>
                     {autoRetryRef.current === 0 ? '2º barrido · +10% tolerancia' : '3er barrido · +10% tolerancia'}
                   </button>
-                  <button
-                    style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid rgba(200,196,190,0.15)', background: 'transparent', color: 'var(--parch-dim)', fontSize: 12, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif' }}
-                    onClick={() => setOfferRetryBanner(false)}
-                  >
-                    No, continuar
-                  </button>
+                  <button style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid rgba(200,196,190,0.15)', background: 'transparent', color: 'var(--parch-dim)', fontSize: 12, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif' }}
+                    onClick={() => setOfferRetryBanner(false)}>No, continuar</button>
                 </div>
               </div>
             )}
@@ -345,15 +317,13 @@ export default function Home() {
         {/* ICR */}
         {(step === 'icr' || step === 'done') && (
           <div style={{ marginTop: 20 }}>
-            {icrLoading && <ICRReportView report={null as any} loading={true} />}
+            {icrLoading && <ICRReportView report={null as any} loading={true} />} {/* eslint-disable-line @typescript-eslint/no-explicit-any */}
             {icrReport && (
               <>
                 <ICRReportView report={icrReport} loading={false} />
                 {step === 'icr' && (
                   <div style={{ marginTop: 20, display: 'flex', gap: 12 }}>
-                    <button className="df-btn-primary" onClick={() => setStep('icr-resolution')} style={{ padding: '12px 32px', fontSize: 15 }}>
-                      Continuar → Revision ICR
-                    </button>
+                    <button className="df-btn-primary" onClick={() => setStep('icr-resolution')} style={{ padding: '12px 32px', fontSize: 15 }}>Continuar → Revision ICR</button>
                     <button className="df-btn-ghost" onClick={handleReset}>↺ Regenerar</button>
                   </div>
                 )}
@@ -361,9 +331,7 @@ export default function Home() {
             )}
             {!icrLoading && !icrReport && step === 'icr' && (
               <div style={{ marginTop: 20 }}>
-                <button className="df-btn-primary" onClick={() => setStep('done')} style={{ padding: '12px 32px', fontSize: 15 }}>
-                  Continuar → Descargar
-                </button>
+                <button className="df-btn-primary" onClick={() => setStep('done')} style={{ padding: '12px 32px', fontSize: 15 }}>Continuar → Descargar</button>
               </div>
             )}
           </div>
@@ -383,27 +351,16 @@ export default function Home() {
           />
         )}
 
-        {/* Download bar — ONLY on step done */}
+        {/* Download bar */}
         {step === 'done' && output && (
           <div style={{ marginTop: 24, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' as const }}>
-            <button className="df-btn-primary" onClick={handleDownload} style={{ padding: '12px 32px', fontSize: 15 }}>
-              ⬇ Descargar .docx
-            </button>
+            <button className="df-btn-primary" onClick={handleDownload} style={{ padding: '12px 32px', fontSize: 15 }}>⬇ Descargar .docx</button>
             {icrReport && icrReport.findings.length > 0 && (
-              <button
-                className="df-btn-ghost"
-                onClick={handleDownloadAnnotated}
-                disabled={loadingAnnotated}
-                style={{ padding: '12px 24px', fontSize: 14, display: 'flex', alignItems: 'center', gap: 8, opacity: loadingAnnotated ? 0.6 : 1 }}
-              >
+              <button className="df-btn-ghost" onClick={handleDownloadAnnotated} disabled={loadingAnnotated}
+                style={{ padding: '12px 24px', fontSize: 14, display: 'flex', alignItems: 'center', gap: 8, opacity: loadingAnnotated ? 0.6 : 1 }}>
                 {loadingAnnotated ? (
-                  <>
-                    <div style={{ width: 14, height: 14, border: '2px solid rgba(200,196,190,0.3)', borderTop: '2px solid var(--parch)', borderRadius: '50%', animation: 'spin-slow 1s linear infinite' }} />
-                    Generando...
-                  </>
-                ) : (
-                  `⚑ Con anotaciones ICR (${icrReport.findings.length})`
-                )}
+                  <><div style={{ width: 14, height: 14, border: '2px solid rgba(200,196,190,0.3)', borderTop: '2px solid var(--parch)', borderRadius: '50%', animation: 'spin-slow 1s linear infinite' }} />Generando...</>
+                ) : `⚑ Con anotaciones ICR (${icrReport.findings.length})`}
               </button>
             )}
             <button className="df-btn-ghost" onClick={handleReset}>↺ Nueva acta</button>
@@ -429,13 +386,8 @@ export default function Home() {
         )}
       </div>
 
-      {/* ── Footer — BP_BRAND_UNRLVL_v1.2 · 3-col · border-top 2px #00FFD1 ── */}
-      <footer style={{
-        position: 'fixed', bottom: 0, left: 0, right: 0,
-        borderTop: '2px solid #00FFD1', background: '#0F0F0F',
-        padding: '10px 32px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
-        alignItems: 'center', gap: '1rem', backdropFilter: 'blur(12px)',
-      }}>
+      {/* Footer */}
+      <footer style={{ position: 'fixed', bottom: 0, left: 0, right: 0, borderTop: '2px solid #00FFD1', background: '#0F0F0F', padding: '10px 32px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', alignItems: 'center', gap: '1rem', backdropFilter: 'blur(12px)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/FPHS_logo-wt.png" alt="ForumPHs" style={{ height: 16, width: 'auto', opacity: 0.75 }} />
