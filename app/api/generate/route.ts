@@ -6,10 +6,8 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import type { GenerateResponse, ParsedHypalZip, PreflightData, DebateBlock, VotationRecord } from '@/lib/types'
-
 export const runtime = 'nodejs'
 export const maxDuration = 120
-
 // ── ICR types ─────────────────────────────────────────────────────────────────
 interface ICRFinding {
   id?: string
@@ -20,7 +18,6 @@ interface ICRFinding {
   issue?: string
   suggestion?: string
 }
-
 const SEV_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const
 const ICR_COLORS: Record<string, { bg: string; accent: string; label: string }> = {
   CRITICAL: { bg: 'FFD7D7', accent: 'FF4444', label: '⚠  CRÍTICO' },
@@ -28,12 +25,10 @@ const ICR_COLORS: Record<string, { bg: string; accent: string; label: string }> 
   MEDIUM:   { bg: 'FFF5CC', accent: 'FFC107', label: '●  MEDIO'   },
   LOW:      { bg: 'D6EEFF', accent: '4FC3F7', label: '○  BAJO'    },
 }
-
 function getWorstSev(findings: ICRFinding[]): string {
   for (const s of SEV_ORDER) { if (findings.some(f => f.severity === s)) return s }
   return 'LOW'
 }
-
 function findingsForSection(findings: ICRFinding[], sectionNum: number): ICRFinding[] {
   return findings.filter(f => {
     const ref = (f.location || f.section || '').toLowerCase()
@@ -42,7 +37,6 @@ function findingsForSection(findings: ICRFinding[], sectionNum: number): ICRFind
            ref.includes(`section ${sectionNum}`)
   })
 }
-
 // ── Vote-to-section matcher ───────────────────────────────────────────────────
 function matchVoteToSection(vote: VotationRecord, agendaItems: { number: number; title: string }[]): number {
   if (agendaItems.length === 0) return 2
@@ -60,12 +54,10 @@ function matchVoteToSection(vote: VotationRecord, agendaItems: { number: number;
   }
   return best
 }
-
 // ── First-call-without-quorum detector ───────────────────────────────────────
 function detectFirstCallNoQuorum(rawTranscription: string): boolean {
   return /primer\s+llamado|no\s+(?:se\s+)?alcanz[oó].*quór?um|segundo\s+llamado|falta.*quór?um/i.test(rawTranscription)
 }
-
 export async function POST(req: NextRequest): Promise<NextResponse<GenerateResponse>> {
   try {
     const body = await req.json()
@@ -74,9 +66,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       preflight: PreflightData
       formalizedBlocks: DebateBlock[]
     } = body
-
     const icrFindings: ICRFinding[] = body.icr_findings || []
-
     const {
       Document, Paragraph, TextRun, Table, TableRow, TableCell,
       AlignmentType, WidthType, BorderStyle, Packer, UnderlineType, Footer,
@@ -85,7 +75,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     const { assignBlocksToSections } = await import('@/lib/processors/sectionAssigner')
     const { buildActaText }          = await import('@/lib/generators/actaBuilder')
     const { runQAScan }              = await import('@/lib/processors/qaScanner')
-
     const s            = parsed.skeleton
     const phName       = s.ph_name || 'PH'
     const actaNum      = s.acta_number || '1'
@@ -97,13 +86,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     const presentUnits = preflight.confirmed_present_units ?? s.present_units ?? parsed.attendance.length
     const totalUnits   = s.total_units || 0
     const timeEnd      = preflight.confirmed_time_end || s.time_end || '[HORA FIN]'
-
     const assignedBlocks       = assignBlocksToSections(formalizedBlocks, s.agenda_items)
     const hasFirstCallNoQuorum = detectFirstCallNoQuorum(parsed.raw_files['transcripcion'] || '')
-
     // ── Helpers ──────────────────────────────────────────────────────────────
     const TNR = 'Times New Roman'
-
     function mdRuns(text: string, size = 22, italic = false) {
       const parts = text.split(/(\*\*[^*]+\*\*)/)
       return parts.map(part => {
@@ -113,7 +99,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         return new TextRun({ text: part, size, font: TNR, italics: italic })
       }).filter(r => (r as any).options?.text !== '')
     }
-
     const normal = (text: string, opts: { bold?: boolean; italic?: boolean; indent?: boolean; before?: number } = {}) =>
       new Paragraph({
         children: opts.bold ? [new TextRun({ text, bold: true, size: 22, font: TNR })] : mdRuns(text, 22, opts.italic),
@@ -121,7 +106,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         indent: opts.indent ? { left: 720 } : undefined,
         spacing: { before: opts.before ?? 120, after: 120, line: 276 },
       })
-
     // ── sectionTitle — NO number prefix (Ivette canonical) ───────────────────
     const sectionTitle = (_num: number | undefined, title: string) =>
       new Paragraph({
@@ -130,7 +114,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         ],
         spacing: { before: 360, after: 160 },
       })
-
     const approval = (text: string, approved: boolean) =>
       new Paragraph({
         children: [
@@ -139,9 +122,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         ],
         spacing: { before: 160, after: 160 },
       })
-
     const emptyLine = () => new Paragraph({ children: [new TextRun({ text: '', size: 22, font: TNR })] })
-
     // ── ICR inline banner ─────────────────────────────────────────────────────
     const icrSectionBanner = (sFindings: ICRFinding[]) => {
       if (sFindings.length === 0) return null
@@ -156,10 +137,8 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         spacing: { before: 0, after: 160 },
       })
     }
-
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const docChildren: any[] = []
-
     // ── TITLE ─────────────────────────────────────────────────────────────────
     docChildren.push(new Paragraph({
       children: [new TextRun({ text: `ACTA No_${actaNum}-${year}`, bold: true, underline: { type: UnderlineType.SINGLE }, size: 28, font: TNR })],
@@ -173,7 +152,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       children: [new TextRun({ text: s.date_str, bold: true, size: 24, font: TNR })],
       alignment: AlignmentType.CENTER, spacing: { after: 360 },
     }))
-
     // ── INTRO ─────────────────────────────────────────────────────────────────
     if (icrFindings.length > 0) {
       const headerFindings = icrFindings.filter(f => {
@@ -183,7 +161,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       const banner = icrSectionBanner(headerFindings)
       if (banner) docChildren.push(banner)
     }
-
     docChildren.push(normal(
       `En la ciudad de Panamá, siendo las ${s.time_start} del ${s.date_str}, ` +
       `se reunieron previa convocatoria los copropietarios del ${phName}, debidamente inscrito ` +
@@ -196,17 +173,14 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       docChildren.push(normal(preflight.convocatoria_text, { italic: true, indent: true }))
     }
     docChildren.push(emptyLine())
-
     // ── SECTION 1: QUORUM ─────────────────────────────────────────────────────
     docChildren.push(sectionTitle(1, 'VERIFICACIÓN DEL QUORUM'))
     if (icrFindings.length > 0) {
       const banner = icrSectionBanner(findingsForSection(icrFindings, 1))
       if (banner) docChildren.push(banner)
     }
-
     const pct       = totalUnits > 0 ? ((presentUnits / totalUnits) * 100).toFixed(2) : '0'
     const minQuorum = Math.floor(totalUnits / 2) + 1
-
     if (hasFirstCallNoQuorum) {
       docChildren.push(normal(
         `Siendo las ${s.time_start}, se realizó el primer llamado para dar inicio a la Asamblea, ` +
@@ -221,7 +195,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       `superando el mínimo requerido de ${minQuorum} unidades. En atención a lo dispuesto en el ` +
       `artículo 67 de la Ley 284 de 2022, se dio inicio a la Asamblea de Propietarios.`
     ))
-
     if (parsed.attendance.length > 0) {
       docChildren.push(normal(`Se encontraban presentes o debidamente representadas ${presentUnits} unidades inmobiliarias, a saber:`))
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -251,7 +224,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       }))
       docChildren.push(emptyLine())
     }
-
     // ── INFORME DE GESTIÓN ────────────────────────────────────────────────────
     if (preflight.has_informe_gestion && preflight.informe_gestion_text) {
       const informeSectionNum = 2
@@ -264,18 +236,15 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       for (const p of paragrphs) docChildren.push(normal(p, { before: 200 }))
       docChildren.push(emptyLine())
     }
-
     // ── AGENDA SECTIONS ───────────────────────────────────────────────────────
     const agendaItems   = s.agenda_items.length > 0 ? s.agenda_items : []
     const sectionOffset = (preflight.has_informe_gestion && preflight.informe_gestion_text) ? 1 : 0
-
     const votesBySectionMap = new Map<number, VotationRecord[]>()
     for (const vote of parsed.votations) {
       const sectionNum = matchVoteToSection(vote, s.agenda_items)
       if (!votesBySectionMap.has(sectionNum)) votesBySectionMap.set(sectionNum, [])
       votesBySectionMap.get(sectionNum)!.push(vote)
     }
-
     if (agendaItems.length > 0) {
       for (const item of agendaItems) {
         const displayNum = item.number + sectionOffset
@@ -330,7 +299,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         ))
       }
     }
-
     // ── CLOSING ───────────────────────────────────────────────────────────────
     docChildren.push(normal(
       `Siendo, el ${s.date_str} a las ${timeEnd}, damos por terminada la sesión de la ` +
@@ -342,14 +310,12 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     docChildren.push(normal(`Junta Directiva, DEL ${phName}`, { bold: true }))
     docChildren.push(emptyLine())
     docChildren.push(emptyLine())
-
     // ── SIGNATURES ───────────────────────────────────────────────────────────
     const presName = s.president_name?.toUpperCase() || '[NOMBRE PRESIDENTE/A]'
     const secName  = s.secretary_name?.toUpperCase()  || '[NOMBRE SECRETARIO/A]'
     const LINE     = '_'.repeat(46)
     const NB       = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }
     const NO_BORDERS = { top: NB, bottom: NB, left: NB, right: NB }
-
     const sigRow = (left: string, right: string, bold = false) => new TableRow({
       children: [
         new TableCell({
@@ -366,7 +332,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       rows: [sigRow(LINE, LINE), sigRow(presName, secName, true), sigRow('PRESIDENTE/A', 'SECRETARIO/A', true)],
       width: { size: 9360, type: WidthType.DXA }, columnWidths: [4680, 4680],
     }))
-
     // ── ICR ANNEX ─────────────────────────────────────────────────────────────
     if (icrFindings.length > 0) {
       docChildren.push(new Paragraph({
@@ -384,9 +349,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         })],
         alignment: AlignmentType.CENTER, spacing: { before: 0, after: 400 },
       }))
-
       const sortedFindings = [...icrFindings].sort((a, b) => SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity))
-
       for (const finding of sortedFindings) {
         const col = ICR_COLORS[finding.severity] || ICR_COLORS.LOW
         const noBorder = { style: BorderStyle.NONE, size: 0, color: 'auto' }
@@ -423,96 +386,55 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         docChildren.push(emptyLine())
       }
     }
-/**
- * PATCH para app/api/generate/route.ts — FPH-016 Imágenes en DOCX
- *
- * INSTRUCCIÓN: Busca la línea que dice:
- *
- *     // ── BUILD ──────────
- *
- * (está cerca del final del archivo, antes de `const now = new Date()`)
- *
- * Pega TODO el bloque de abajo JUSTO ANTES de esa línea.
- *
- * ════════════════════════════════════════════════════════════════
- */
-
     // ── IMAGES APPENDIX — FPH-016 ──────────────────────────────────────────────
     const docImages = parsed.images || []
     if (docImages.length > 0) {
       const { ImageRun } = await import('docx')
-
-      // Page break before appendix
       docChildren.push(new Paragraph({
         children: [new TextRun({ text: '', size: 22, font: TNR })],
-        pageBreakBefore: true,
-        spacing: { before: 0, after: 0 },
+        pageBreakBefore: true, spacing: { before: 0, after: 0 },
       }))
-
       docChildren.push(new Paragraph({
         children: [new TextRun({
           text: 'DOCUMENTOS DE RESPALDO — IMÁGENES',
-          bold: true,
-          underline: { type: UnderlineType.SINGLE },
-          size: 26,
-          font: TNR,
+          bold: true, underline: { type: UnderlineType.SINGLE }, size: 26, font: TNR,
         })],
-        alignment: AlignmentType.CENTER,
-        spacing: { before: 0, after: 120 },
+        alignment: AlignmentType.CENTER, spacing: { before: 0, after: 120 },
       }))
-
       docChildren.push(new Paragraph({
         children: [new TextRun({
           text: `${docImages.length} imagen${docImages.length > 1 ? 'es' : ''} extraída${docImages.length > 1 ? 's' : ''} del paquete Hypal · Para referencia y respaldo`,
           size: 17, font: TNR, color: '888888', italics: true,
         })],
-        alignment: AlignmentType.CENTER,
-        spacing: { before: 0, after: 400 },
+        alignment: AlignmentType.CENTER, spacing: { before: 0, after: 400 },
       }))
-
       for (const img of docImages) {
-        // Filename caption
         docChildren.push(new Paragraph({
-          children: [new TextRun({
-            text: img.filename,
-            size: 18, font: TNR, color: '666666', italics: true,
-          })],
+          children: [new TextRun({ text: img.filename, size: 18, font: TNR, color: '666666', italics: true })],
           spacing: { before: 240, after: 80 },
         }))
-
         try {
           const imgBuffer = Buffer.from(img.data, 'base64')
-          // Auto-size: max width 500pt, proportional height estimate
           docChildren.push(new Paragraph({
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             children: [new (ImageRun as any)({
               data: imgBuffer,
               transformation: { width: 500, height: 360 },
+              type: img.type === 'image/png' ? 'png' : 'jpg',  // ← FPH-016 fix
             })],
             spacing: { before: 0, after: 200 },
           }))
         } catch {
           docChildren.push(new Paragraph({
-            children: [new TextRun({
-              text: `[Imagen no disponible: ${img.filename}]`,
-              size: 17, font: TNR, color: '999999',
-            })],
+            children: [new TextRun({ text: `[Imagen no disponible: ${img.filename}]`, size: 17, font: TNR, color: '999999' })],
             spacing: { before: 0, after: 200 },
           }))
         }
       }
     }
-
-/**
- * ════════════════════════════════════════════════════════════════
- * FIN DEL PATCH — después de este bloque viene el // ── BUILD ──
- * ════════════════════════════════════════════════════════════════
- */
-
     // ── BUILD ─────────────────────────────────────────────────────────────────
     const now = new Date()
-    const footerLabel = `Generado por Document Factory · ForumPHs · v1.4 · ${now.toLocaleDateString('es-PA')}`
-
+    const footerLabel = `Generado por Document Factory · ForumPHs · v1.5 · ${now.toLocaleDateString('es-PA')}`
     const doc = new Document({
       sections: [{
         properties: { page: { margin: { top: 1440, right: 1440, bottom: 1800, left: 1440 } } },
@@ -527,7 +449,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         children: docChildren,
       }],
     })
-
     const buffer    = await Packer.toBuffer(doc)
     const base64    = buffer.toString('base64')
     const actaText  = buildActaText(parsed, preflight, assignedBlocks)
@@ -536,9 +457,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     const annotatedSuffix = icrFindings.length > 0 ? '_ICR' : ''
     const filename  = `ACTA_${typeCode}_${actaNum}-${year}_${slug}_df_v1${annotatedSuffix}.docx`
     const wordCount = actaText.split(/\s+/).length
-
     return NextResponse.json({ success: true, docx_base64: base64, filename, word_count: wordCount, qa_report, acta_text: actaText })
-
   } catch (err: unknown) {
     console.error('Generate error:', err)
     return NextResponse.json({ success: false, error: err instanceof Error ? err.message : String(err) }, { status: 500 })

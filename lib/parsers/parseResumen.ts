@@ -20,22 +20,20 @@ function extractDate(text: string): string {
   // Format: "Fecha: 07 de abril de 2026" — Hypal resumen header
   const m2b = text.match(/[Ff]echa[:\s]+([\d]{1,2}\s+de\s+\w+\s+de\s+\d{4})/i)
   if (m2b) return m2b[1].trim()
-  // Format: "abril 21, 2025" or "21/04/2025"
+  // Format: "21/04/2025"
   const m3 = text.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}/)
   if (m3) return m3[0]
   return '[FECHA PENDIENTE — proveer en Pre-flight]'
 }
 
 function extractTime(text: string, type: 'start' | 'end'): string {
-  // Look for time patterns like "6:22 pm", "18:22", "las seis"
   if (type === 'start') {
-    const m = text.match(/(?:inicio|inicia|siendo las?|a las?)\s+(?:las?\s+)?(\d{1,2}:\d{2}\s*(?:am|pm|p\.m\.|a\.m\.)?)/i)
+    const m = text.match(/(?:inicio|inicia|siendo las?|a las?)(?:las?\s+)?(\d{1,2}:\d{2}\s*(?:am|pm|p\.m\.|a\.m\.)?)/i)
     if (m) return m[1].trim()
-    // Try "6:22 pm" anywhere in opening
     const m2 = text.match(/(\d{1,2}:\d{2}\s*(?:am|pm))/i)
     if (m2) return m2[1].trim()
   } else {
-    const m = text.match(/(?:siendo las?|terminó|finalizó|se da por terminad[ao]|damos por terminada).*?(\d{1,2}:\d{2}\s*(?:am|pm|p\.m\.)?)/i)
+    const m = text.match(/(?:siendo las?|terminó|finalizó|se da por terminad[ao]|damos por terminada).{0,30}?(\d{1,2}:\d{2}\s*(?:am|pm|p\.m\.)?)/i)
     if (m) return m[1].trim()
   }
   return type === 'start' ? '[HORA INICIO PENDIENTE]' : '[HORA FIN PENDIENTE]'
@@ -43,40 +41,81 @@ function extractTime(text: string, type: 'start' | 'end'): string {
 
 function extractPHName(text: string): string {
   // "PH VENEZIA TOWER", "P.H. LEFEVRE 75 DON ENRIQUE"
-  const m = text.match(/(?:P\.?H\.?\s+)([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ0-9\s]+?)(?:\n|,|\.|\(|del|de la)/i)
+  const m = text.match(/(?:P\.?H\.?\s+)([A-ZÁÉÍÓÚÑa-záéíóúñ][A-ZÁÉÍÓÚÑa-záéíóúñ0-9\s]+?)(?:\n|,|\.|\/|\(|del|de la)/i)
   if (m) return `PH ${m[1].trim().toUpperCase()}`
   return '[NOMBRE PH PENDIENTE]'
 }
 
+/**
+ * extractQuorum — improved v2
+ * Distinguishes between total PH units and present/represented units.
+ * Hypal resumen uses patterns like:
+ *   "274 unidades inmobiliarias que conforman el PH"
+ *   "163 unidades ... presentes o representadas"
+ *   "el PH cuenta con 274 propietarios"
+ */
 function extractQuorum(text: string): { total: number; present: number; pct: number } {
-  const totalM = text.match(/(\d+)\s+(?:propietarios|unidades)\s+(?:en total|que conforman)/i)
-  const presentM = text.match(/(\d+)\s+(?:propietarios|unidades)\s+(?:presentes|representados)/i)
-  const pctM = text.match(/(\d+(?:\.\d+)?)\s*%/)
-
-  return {
-    total: totalM ? parseInt(totalM[1]) : 0,
-    present: presentM ? parseInt(presentM[1]) : 0,
-    pct: pctM ? parseFloat(pctM[1]) : 0,
+  // ── Total units of the PH ───────────────────────────────────────────────
+  // Patterns: "274 unidades que conforman", "cuenta con 274", "total de 274", "PH tiene 274"
+  const totalPatterns = [
+    /(\d+)\s+(?:unidades|propietarios)\s+(?:inmobiliarias?\s+)?que\s+(?:conforman|componen|integran)/i,
+    /(?:cuenta|cuentan)\s+con\s+(\d+)\s+(?:unidades|propietarios)/i,
+    /(?:total\s+de|un\s+total\s+de)\s+(\d+)\s+(?:unidades|propietarios)/i,
+    /(?:PH|propiedad\s+horizontal)\s+(?:cuenta|tiene|compuesto|conformado)\s+(?:con\s+)?(\d+)/i,
+    // Hypal resumen header: "Total Unidades: 274" or "Unidades totales: 274"
+    /(?:total\s+unidades?|unidades?\s+totales?)\s*[:\-]\s*(\d+)/i,
+  ]
+  let total = 0
+  for (const pattern of totalPatterns) {
+    const m = text.match(pattern)
+    if (m) { total = parseInt(m[1]); break }
   }
+
+  // ── Present / represented units ─────────────────────────────────────────
+  // Patterns: "206 unidades presentes", "presentes o representadas 206", "206 propietarios presentes"
+  const presentPatterns = [
+    /(\d+)\s+(?:unidades|propietarios)\s+(?:inmobiliarias?\s+)?(?:presentes?|representad[ao]s?)/i,
+    /(?:presentes?\s+o\s+(?:debidamente\s+)?representad[ao]s?)\s+(\d+)/i,
+    /se\s+encontraban\s+presentes?\s+(?:o\s+representad[ao]s?\s+)?(\d+)/i,
+    /quórum\s+(?:de|con)\s+(\d+)\s+(?:unidades|propietarios)/i,
+  ]
+  let present = 0
+  for (const pattern of presentPatterns) {
+    const m = text.match(pattern)
+    if (m) { present = parseInt(m[1]); break }
+  }
+
+  // ── Percentage ───────────────────────────────────────────────────────────
+  const pctM = text.match(/(\d+(?:\.\d+)?)\s*%/)
+  const pct = pctM ? parseFloat(pctM[1]) : 0
+
+  // ── Sanity check: if total === present (likely wrong), reset total ───────
+  // This prevents the 206/206 bug — if we can't distinguish, leave total = 0
+  // so the preflight gap forces Ivette to enter the real number
+  if (total > 0 && total === present) total = 0
+
+  return { total, present, pct }
 }
 
-function extractAgendaItems(text: string): AgendaItem[] {
+/**
+ * extractAgendaItems — exported for reuse in parse/route.ts
+ * Extracts numbered agenda items from any text block.
+ */
+export function extractAgendaItems(text: string): AgendaItem[] {
   const items: AgendaItem[] = []
-  // Look for numbered list items
   const lines = text.split('\n')
   let inAgenda = false
 
   for (const line of lines) {
     const t = line.trim()
-    if (/orden del día/i.test(t)) { inAgenda = true; continue }
+    if (/orden del d[ií]a/i.test(t)) { inAgenda = true; continue }
     if (inAgenda && /^\d+[\.\)]\s+(.+)/.test(t)) {
       const m = t.match(/^(\d+)[\.\)]\s+(.+)/)
-      if (m) {
-        items.push({ number: parseInt(m[1]), title: m[2].trim() })
-      }
+      if (m) items.push({ number: parseInt(m[1]), title: m[2].trim() })
     }
+    // Stop after a long empty stretch
     if (inAgenda && items.length > 0 && /^\s*$/.test(t) && items.length >= 3) {
-      // end of agenda section
+      // keep going — agenda might have blank lines between items
     }
   }
   return items
@@ -89,32 +128,32 @@ export function parseResumen(rawText: string): SkeletonData {
   const isExtraordinaria = /extraordinaria/i.test(rawText)
 
   // Extract acta number
-  const actaM = rawText.match(/[Aa]cta\s*[Nn][o°º]?\.?\s*(\d+)[-–]?(\d{4})?/i)
+  const actaM = rawText.match(/[Aa]cta\s*[Nn][oº°]?\.?\s*(\d+)[-–]?(\d{4})?/i)
   const actaNumber = actaM ? `${actaM[1]}${actaM[2] ? '-' + actaM[2] : ''}` : undefined
 
   // Finca / Código
-  const fincaM = rawText.match(/[Ff]inca\s+[Nn]úmero\s+([\d\s]+?)(?:,|\.|con|\n)/i)
-  const codigoM = rawText.match(/[Cc]ódigo\s+(?:de\s+ubicación\s+)?[Nn]úmero\s+([\d\s]+?)(?:,|\.|de|\n)/i)
+  const fincaM = rawText.match(/[Ff]inca\s+[Nn]úmero\s+([\d\s]+?)(?:,|\.| con|\n)/i)
+  const codigoM = rawText.match(/[Cc]ódigo\s+(?:de\s+ubicación\s+)?[Nn]úmero\s+([\d\s]+?)(?:,|\.| de|\n)/i)
 
   // Extract president and secretary names
-  const presMatch = rawText.match(/[Pp]resident[ae]?[:\s]+([A-ZÁÉÍÓÚÑÜ][a-záéíóúñü]+(?:\s+[A-ZÁÉÍÓÚÑÜ][a-záéíóúñü]+){1,4})/i)
-  const secMatch = rawText.match(/[Ss]ecretari[ao][:\s]+([A-ZÁÉÍÓÚÑÜ][a-záéíóúñü]+(?:\s+[A-ZÁÉÍÓÚÑÜ][a-záéíóúñü]+){1,4})/i)
+  const presMatch = rawText.match(/[Pp]residente?\s*[:\s]+([A-ZÁÉÍÓÚÑa-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑa-záéíóúñ]+){1,3})/i)
+  const secMatch  = rawText.match(/[Ss]ecretari[ao]\s*[:\s]+([A-ZÁÉÍÓÚÑa-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑa-záéíóúñ]+){1,3})/i)
 
   return {
-    ph_name: extractPHName(rawText),
-    ph_finca: fincaM ? fincaM[1].trim().replace(/\s+/g, '') : undefined,
-    ph_codigo: codigoM ? codigoM[1].trim().replace(/\s+/g, '') : undefined,
-    assembly_type: isExtraordinaria ? 'EXTRAORDINARIA' : 'ORDINARIA',
-    acta_number: actaNumber,
-    date_str: extractDate(rawText),
-    time_start: extractTime(rawText, 'start'),
-    time_end: extractTime(rawText, 'end'),
-    total_units: quorum.total || 0,
-    present_units: quorum.present || 0,
-    quorum_pct: quorum.pct || 0,
-    agenda_items: extractAgendaItems(rawText),
-    president_name: presMatch ? presMatch[1].trim() : undefined,
-    secretary_name: secMatch ? secMatch[1].trim() : undefined,
-    raw_text: rawText,
+    ph_name:         extractPHName(rawText),
+    ph_finca:        fincaM ? fincaM[1].trim().replace(/\s+/g, '') : undefined,
+    ph_codigo:       codigoM ? codigoM[1].trim().replace(/\s+/g, '') : undefined,
+    assembly_type:   isExtraordinaria ? 'EXTRAORDINARIA' : 'ORDINARIA',
+    acta_number:     actaNumber,
+    date_str:        extractDate(rawText),
+    time_start:      extractTime(rawText, 'start'),
+    time_end:        extractTime(rawText, 'end'),
+    total_units:     quorum.total  || 0,
+    present_units:   quorum.present || 0,
+    quorum_pct:      quorum.pct    || 0,
+    agenda_items:    extractAgendaItems(rawText),
+    president_name:  presMatch ? presMatch[1].trim() : undefined,
+    secretary_name:  secMatch  ? secMatch[1].trim()  : undefined,
+    raw_text:        rawText,
   }
 }

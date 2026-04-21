@@ -61,7 +61,7 @@ export function detectPreflightGaps(parsed: ParsedHypalZip): PreflightGap[] {
     label: 'Orden del Día — verificar y completar',
     description: s.agenda_items.length > 0
       ? `Se detectaron ${s.agenda_items.length} punto(s). Verifica que estén todos y agrega los que falten (uno por línea, ej: "3. Informe de Gestión")`
-      : 'No se detectaron puntos del orden del día. Ingresalos manualmente (uno por línea, ej: "1. Verificación del quórum")',
+      : 'No se detectaron puntos del orden del día en ningún documento. Ingrésalos manualmente (uno por línea, ej: "1. Verificación del quórum")',
     required: false,
     type: 'textarea',
     value: parsedAgendaText,
@@ -77,15 +77,17 @@ export function detectPreflightGaps(parsed: ParsedHypalZip): PreflightGap[] {
     value: parsed.attendance.length,
   })
 
-  // 5a. Total units (if not found)
+  // 5a. Total units — CRITICAL FIX: default = 0, NOT attendance count
+  // If we default to attendance.length, Ivette confirms 206 as "total" when it's just "present".
+  // Leaving it blank forces her to enter the real PH total (e.g. 274).
   if (!s.total_units || s.total_units === 0) {
     gaps.push({
       field: 'total_units',
-      label: 'Total de unidades del PH *',
-      description: 'Número total de unidades inmobiliarias que conforman el PH (ej: 274)',
+      label: 'Total de unidades del PH ← REQUERIDO',
+      description: 'Número TOTAL de unidades inmobiliarias que conforman el PH (ej: 274). Este número NO es el de asistentes.',
       required: true,
       type: 'number',
-      value: parsed.attendance.length || 0,
+      value: 0,   // ← NUNCA usar attendance.length como default — causa el bug 206/206
     })
   }
 
@@ -143,7 +145,7 @@ export function parseAgendaText(text: string): AgendaItem[] {
       const m = l.match(/^(\d+)[.)]\s+(.+)/)
       if (m) return { number: parseInt(m[1]), title: m[2].trim() }
       // Line without number — auto-assign
-      return { number: idx + 1, title: l.replace(/^[-•*]\s*/, '').trim() }
+      return { number: idx + 1, title: l.replace(/^[-•–]\s*/, '').trim() }
     })
     .filter(item => item.title.length > 0)
 }
@@ -154,8 +156,8 @@ export function applyPreflightAnswers(
 ): ParsedHypalZip {
   const updated = { ...parsed, skeleton: { ...parsed.skeleton } }
 
-  if (answers.finca) updated.skeleton.ph_finca = String(answers.finca)
-  if (answers.codigo) updated.skeleton.ph_codigo = String(answers.codigo)
+  if (answers.finca)   updated.skeleton.ph_finca  = String(answers.finca)
+  if (answers.codigo)  updated.skeleton.ph_codigo = String(answers.codigo)
   if (answers.confirmed_present_units) {
     updated.skeleton.present_units = Number(answers.confirmed_present_units)
   }
