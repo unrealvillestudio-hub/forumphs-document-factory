@@ -194,9 +194,12 @@ export default function Home() {
     setTimeout(() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }), 80)
     const timeout = setTimeout(() => { setIcrLoading(false); setStep('done') }, 45000)
     try {
+      // Strip images from parsed — /api/icr doesn't need them and they cause 413
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { images: _icrImages, ...parsedForICR } = parsed
       const icrRes = await fetch('/api/icr', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ acta_text: output.acta_text || '', parsed }),
+        body: JSON.stringify({ acta_text: output.acta_text || '', parsed: parsedForICR }),
       })
       const icrData = await icrRes.json()
       if (icrData.success) setIcrReport(icrData.report)
