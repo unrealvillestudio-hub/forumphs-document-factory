@@ -2,12 +2,26 @@
  * lib/zipExtractor.ts
  * Browser-side extraction of Hypal ZIP packages.
  * Runs entirely client-side — ZIP never leaves the user's machine.
+ *
+ * Extracts:
+ *   - Resumen_de_la_Asamblea.docx  → plain text + embedded images
+ *   - Transcripcion_*.docx / *.vtt → plain text + embedded images
+ *   - Asistencia_*.xlsx            → row array
+ *   - Votaciones_*.xlsx            → row array
+ *   - *chat*.txt                   → plain text
+ *   - *.png / *.jpg / *.jpeg       → base64 images (standalone)
+ *
+ * NOTE: DOCX files are themselves ZIPs. Images inside them live at
+ * word/media/image1.png, word/media/image2.jpeg, etc.
+ * We extract those too so Hypal's quorum charts and voting screenshots
+ * appear in the final acta.
  */
 
 export interface ExtractedImage {
   filename: string
   data: string        // base64
   type: 'image/png' | 'image/jpeg'
+  source?: string     // which docx it came from, or 'standalone'
 }
 
 export interface ExtractedData {
@@ -24,7 +38,7 @@ export interface ExtractedData {
     votaciones_rows_count: number
     images_count: number
     chat_found: boolean
-    files_detected: string[]   // filenames found — for debugging
+    files_detected: string[]
   }
 }
 
@@ -41,7 +55,7 @@ function isTranscripcion(name: string): boolean {
   return (
     n.includes('transcripci') ||
     n.includes('transcript') ||
-    n.includes('grabaci') ||      // Hypal sometimes names it "Grabacion_..."
+    n.includes('grabaci') ||
     n.includes('recording') ||
     n.endsWith('.vtt')
   )
@@ -70,12 +84,33 @@ function isVotaciones(name: string): boolean {
 
 function isChat(name: string): boolean {
   const n = name.toLowerCase()
-  return (n.includes('chat') || n.includes('mensaje')) && (n.endsWith('.txt') || n.endsWith('.docx'))
+  return (n.includes('chat') || n.includes('mensaje')) &&
+    (n.endsWith('.txt') || n.endsWith('.docx'))
 }
 
-function isImage(name: string): boolean {
+function isStandaloneImage(name: string): boolean {
   const n = name.toLowerCase()
   return n.endsWith('.png') || n.endsWith('.jpg') || n.endsWith('.jpeg')
+}
+
+// ── Image type detection ──────────────────────────────────────────────────
+
+function mimeFromName(filename: string): 'image/png' | 'image/jpeg' {
+  return filename.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg'
+}
+
+// ── ArrayBuffer → base64 ──────────────────────────────────────────────────
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  // Process in chunks to avoid call stack overflow on large images
+  const chunkSize = 8192
+  for (let i = 0; i < bytes.byteLength; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize)
+    binary += String.fromCharCode(...chunk)
+  }
+  return btoa(binary)
 }
 
 // ── DOCX text extraction via mammoth ────────────────────────────────────────
@@ -87,7 +122,7 @@ async function extractDocxText(arrayBuffer: ArrayBuffer): Promise<string> {
     const result = await mammoth.extractRawText({ arrayBuffer })
     return (result.value || '').trim()
   } catch {
-    // Fallback: raw XML stripping (less accurate but always works)
+    // Fallback: raw XML stripping
     try {
       const JSZip = (await import('jszip')).default
       const zip = await JSZip.loadAsync(arrayBuffer)
@@ -108,6 +143,51 @@ async function extractDocxText(arrayBuffer: ArrayBuffer): Promise<string> {
   }
 }
 
+// ── DOCX embedded images extraction ──────────────────────────────────────────
+// DOCX files are ZIPs. Images live at word/media/image1.png, etc.
+// Hypal embeds quorum charts and voting screenshots here.
+
+async function extractDocxImages(
+  arrayBuffer: ArrayBuffer,
+  sourceLabel: string
+): Promise<ExtractedImage[]> {
+  const images: ExtractedImage[] = []
+  try {
+    const JSZip = (await import('jszip')).default
+    const docxZip = await JSZip.loadAsync(arrayBuffer)
+
+    // Find all files under word/media/
+    const mediaFiles = Object.values(docxZip.files).filter(f => {
+      if (f.dir) return false
+      const n = f.name.toLowerCase()
+      return n.startsWith('word/media/') && (
+        n.endsWith('.png') || n.endsWith('.jpg') || n.endsWith('.jpeg') ||
+        n.endsWith('.gif') || n.endsWith('.bmp') || n.endsWith('.tiff')
+      )
+    })
+
+    for (const mediaFile of mediaFiles) {
+      try {
+        const imgBuffer = await mediaFile.async('arraybuffer')
+        const filename = mediaFile.name.split('/').pop() || mediaFile.name
+        // Skip tiny images (icons, bullets, etc.) — less than 5KB
+        if (imgBuffer.byteLength < 5120) continue
+        images.push({
+          filename: `${sourceLabel}_${filename}`,
+          data: arrayBufferToBase64(imgBuffer),
+          type: mimeFromName(filename),
+          source: sourceLabel,
+        })
+      } catch {
+        // skip this image
+      }
+    }
+  } catch {
+    // not a valid ZIP/DOCX — skip
+  }
+  return images
+}
+
 // ── XLSX row extraction ──────────────────────────────────────────────────────
 
 async function extractXlsxRows(arrayBuffer: ArrayBuffer): Promise<Record<string, string>[]> {
@@ -118,19 +198,6 @@ async function extractXlsxRows(arrayBuffer: ArrayBuffer): Promise<Record<string,
     return XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: '', raw: false })
   } catch {
     return []
-  }
-}
-
-// ── Image extraction ──────────────────────────────────────────────────────────
-
-async function extractImageBase64(arrayBuffer: ArrayBuffer, filename: string): Promise<ExtractedImage> {
-  const bytes = new Uint8Array(arrayBuffer)
-  let binary = ''
-  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i])
-  return {
-    filename,
-    data: btoa(binary),
-    type: filename.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg',
   }
 }
 
@@ -168,8 +235,6 @@ export async function extractZip(file: File, onProgress?: ProgressCallback): Pro
   const files = Object.values(zip.files).filter(f => !f.dir)
   const total = files.length
   const filesLog: string[] = []
-
-  // Log all filenames (flattened — no path prefix)
   files.forEach(f => filesLog.push(f.name.split('/').pop() || f.name))
   result.stats.files_detected = filesLog
 
@@ -183,6 +248,10 @@ export async function extractZip(file: File, onProgress?: ProgressCallback): Pro
       const buf = await f.async('arraybuffer')
       result.resumen = await extractDocxText(buf)
       result.stats.resumen_found = result.resumen.length > 50
+      // Extract embedded images from Resumen DOCX
+      onProgress?.(`Extrayendo imágenes del resumen…`, pct)
+      const resumenImages = await extractDocxImages(buf, 'resumen')
+      result.images.push(...resumenImages)
 
     } else if (isTranscripcion(name)) {
       onProgress?.(`Extrayendo transcripción: ${name}`, pct)
@@ -191,6 +260,9 @@ export async function extractZip(file: File, onProgress?: ProgressCallback): Pro
       } else {
         const buf = await f.async('arraybuffer')
         result.transcripcion = await extractDocxText(buf)
+        // Extract embedded images from Transcripción DOCX (e.g. quorum report)
+        const transcImages = await extractDocxImages(buf, 'transcripcion')
+        result.images.push(...transcImages)
       }
       result.stats.transcripcion_found = result.transcripcion.length > 100
 
@@ -208,16 +280,37 @@ export async function extractZip(file: File, onProgress?: ProgressCallback): Pro
 
     } else if (isChat(name)) {
       onProgress?.(`Extrayendo chat: ${name}`, pct)
-      result.chats = name.endsWith('.txt') ? await f.async('string') : await extractDocxText(await f.async('arraybuffer'))
+      if (name.endsWith('.txt')) {
+        result.chats = await f.async('string')
+      } else {
+        const buf = await f.async('arraybuffer')
+        result.chats = await extractDocxText(buf)
+      }
       result.stats.chat_found = result.chats.length > 10
 
-    } else if (isImage(name)) {
-      onProgress?.(`Extrayendo imagen: ${name}`, pct)
-      result.images.push(await extractImageBase64(await f.async('arraybuffer'), name))
-      result.stats.images_count++
+    } else if (isStandaloneImage(name)) {
+      // Standalone images at the ZIP root level
+      onProgress?.(`Extrayendo imagen standalone: ${name}`, pct)
+      const buf = await f.async('arraybuffer')
+      result.images.push({
+        filename: name,
+        data: arrayBufferToBase64(buf),
+        type: mimeFromName(name),
+        source: 'standalone',
+      })
     }
   }
 
-  onProgress?.('Extracción completada ✓', 100)
+  // Deduplicate images by filename+size (same image embedded in multiple docs)
+  const seen = new Set<string>()
+  result.images = result.images.filter(img => {
+    const key = `${img.filename}_${img.data.length}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+
+  result.stats.images_count = result.images.length
+  onProgress?.(`Extracción completada ✓ (${result.images.length} imágenes)`, 100)
   return result
 }
