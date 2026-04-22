@@ -5,12 +5,11 @@ import PreflightForm from '@/components/PreflightForm'
 import ProcessingPipeline from '@/components/ProcessingPipeline'
 import QAReportView from '@/components/QAReport'
 import ICRReportView from '@/components/ICRReport'
-import type { ICRReport } from '@/lib/types'
+import type { ICRReport, ExtractedImage } from '@/lib/types'
 import { createJob, updateJob, saveJobId, clearJobId } from '@/lib/supabaseSession'
 import { parseAgendaText } from '@/lib/processors/preflightDetector'
 import type { ParsedHypalZip, PreflightGap, PreflightData, DebateBlock, QAReport } from '@/lib/types'
 
-// ICR Revisión eliminada — el anexo ICR en el DOCX cubre esa necesidad
 type Step = 'upload' | 'preflight' | 'formalizing' | 'generating' | 'qa' | 'icr' | 'done' | 'error'
 
 interface DocOutput {
@@ -27,6 +26,35 @@ const STEPS = [
   { id: 'done',        label: 'Descarga'  },
 ]
 
+// ── Image compression — browser Canvas API ────────────────────────────────────
+// Reduces each image to max 900px wide, JPEG q=0.75
+// Prevents 413 errors when sending to /api/generate
+async function compressImage(img: ExtractedImage): Promise<ExtractedImage> {
+  try {
+    const MAX_WIDTH = 900
+    const QUALITY  = 0.75
+    return await new Promise((resolve) => {
+      const image = new Image()
+      image.onload = () => {
+        const scale  = Math.min(1, MAX_WIDTH / image.width)
+        const canvas = document.createElement('canvas')
+        canvas.width  = Math.round(image.width  * scale)
+        canvas.height = Math.round(image.height * scale)
+        const ctx = canvas.getContext('2d')
+        if (!ctx) { resolve(img); return }
+        ctx.drawImage(image, 0, 0, canvas.width, canvas.height)
+        const compressed = canvas.toDataURL('image/jpeg', QUALITY)
+        const base64 = compressed.split(',')[1]
+        resolve({ ...img, data: base64, type: 'image/jpeg' })
+      }
+      image.onerror = () => resolve(img) // fallback: keep original
+      image.src = `data:${img.type};base64,${img.data}`
+    })
+  } catch {
+    return img // fallback: keep original
+  }
+}
+
 function UnrlvlSig({ size = 11 }: { size?: number }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 0 }}>
@@ -39,31 +67,50 @@ function UnrlvlSig({ size = 11 }: { size?: number }) {
 }
 
 export default function Home() {
-  const [step, setStep] = useState<Step>('upload')
-  const [uploading, setUploading] = useState(false)
-  const [parsed, setParsed] = useState<ParsedHypalZip | null>(null)
-  const [gaps, setGaps] = useState<PreflightGap[]>([])
-  const [preflight, setPreflight] = useState<PreflightData | null>(null)
+  const [step, setStep]                         = useState<Step>('upload')
+  const [uploading, setUploading]               = useState(false)
+  const [parsed, setParsed]                     = useState<ParsedHypalZip | null>(null)
+  const [gaps, setGaps]                         = useState<PreflightGap[]>([])
+  const [preflight, setPreflight]               = useState<PreflightData | null>(null)
   const [blocksToFormalize, setBlocksToFormalize] = useState<DebateBlock[]>([])
   const [formalizedBlocks, setFormalizedBlocks] = useState<DebateBlock[]>([])
-  const [output, setOutput] = useState<DocOutput | null>(null)
-  const [icrReport, setIcrReport] = useState<ICRReport | null>(null)
-  const [icrLoading, setIcrLoading] = useState(false)
+  const [output, setOutput]                     = useState<DocOutput | null>(null)
+  const [icrReport, setIcrReport]               = useState<ICRReport | null>(null)
+  const [icrLoading, setIcrLoading]             = useState(false)
   const [loadingAnnotated, setLoadingAnnotated] = useState(false)
-  const autoRetryRef = useRef(0)
+  // ── Images stored separately — NEVER sent to /api/parse (413 prevention) ──
+  const [extractedImages, setExtractedImages]   = useState<ExtractedImage[]>([])
+  const autoRetryRef                            = useRef(0)
   const [offerRetryBanner, setOfferRetryBanner] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [jobId, setJobId] = useState<string | null>(null)
+  const [error, setError]                       = useState<string | null>(null)
+  const [jobId, setJobId]                       = useState<string | null>(null)
 
+  // ── Step 1: Upload & Parse ZIP ─────────────────────────────────────────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleFileSelected = async (extracted: any) => {
     setUploading(true); setError(null)
     try {
-      const res = await fetch('/api/parse', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(extracted) })
+      // ── KEY FIX: strip images from parse payload, hold them in state ──────
+      // Sending images to /api/parse causes 413 (Request Entity Too Large).
+      // Images are NOT needed for parsing — only for generating the DOCX.
+      const { images, ...parsePayload } = extracted
+      setExtractedImages(images || [])
+
+      const res = await fetch('/api/parse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsePayload),
+      })
       const data = await res.json()
       if (!data.success || !data.parsed) throw new Error(data.error || 'Error al procesar el ZIP')
-      setParsed(data.parsed); setGaps(data.preflight_gaps || [])
-      const jid = await createJob({ stage: 'preflight', parsed: data.parsed })
+
+      // Re-attach images to parsed result for later use in generate
+      const parsedWithImages: ParsedHypalZip = {
+        ...data.parsed,
+        images: images || [],
+      }
+      setParsed(parsedWithImages); setGaps(data.preflight_gaps || [])
+      const jid = await createJob({ stage: 'preflight', parsed: parsedWithImages })
       if (jid) { setJobId(jid); saveJobId(jid) }
       setStep('preflight')
     } catch (err) { setError(err instanceof Error ? err.message : 'Error desconocido'); setStep('error') }
@@ -116,10 +163,15 @@ export default function Home() {
     if (!parsed || !preflight) return
     setError(null)
     try {
+      // ── Compress images before sending to avoid 413 on /api/generate ──────
+      const compressed = await Promise.all(extractedImages.map(compressImage))
+
       const res = await fetch('/api/generate', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          parsed, preflight,
+          parsed: { ...parsed, images: compressed },
+          preflight,
           formalizedBlocks: blocks || formalizedBlocks,
           retry_attempt: autoRetryRef.current,
           icr_findings: opts?.withIcr && icrReport ? icrReport.findings : [],
@@ -136,11 +188,9 @@ export default function Home() {
     } catch (err) { setError(err instanceof Error ? err.message : 'Error al generar'); setStep('error') }
   }
 
-  // ICR — auto-scroll para que Ivette vea el spinner inmediatamente
   const runICR = async () => {
     if (!output || !parsed) { setStep('icr'); return }
     setIcrLoading(true); setStep('icr')
-    // Scroll down so the ICR loading indicator is visible
     setTimeout(() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }), 80)
     const timeout = setTimeout(() => { setIcrLoading(false); setStep('done') }, 45000)
     try {
@@ -160,9 +210,15 @@ export default function Home() {
     if (!parsed || !preflight || !icrReport) return
     setLoadingAnnotated(true)
     try {
+      const compressed = await Promise.all(extractedImages.map(compressImage))
       const res = await fetch('/api/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parsed, preflight, formalizedBlocks, retry_attempt: autoRetryRef.current, icr_findings: icrReport.findings }),
+        body: JSON.stringify({
+          parsed: { ...parsed, images: compressed },
+          preflight, formalizedBlocks,
+          retry_attempt: autoRetryRef.current,
+          icr_findings: icrReport.findings,
+        }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.error || 'Error')
@@ -185,6 +241,7 @@ export default function Home() {
     setGaps([]); setPreflight(null); setBlocksToFormalize([])
     setFormalizedBlocks([]); setOutput(null); setError(null)
     setOfferRetryBanner(false); setLoadingAnnotated(false)
+    setExtractedImages([])
   }
 
   const activeStepIndex = STEPS.findIndex(s => s.id === step)
@@ -234,7 +291,7 @@ export default function Home() {
           />
         )}
 
-        {/* Blank screen guard — transcripción vacía */}
+        {/* Blank screen guard */}
         {step === 'formalizing' && blocksToFormalize.length === 0 && (
           <div className="fade-in" style={{ textAlign: 'center', padding: '64px 0' }}>
             <div style={{ fontSize: 48, marginBottom: 20 }}>⚠️</div>
@@ -257,6 +314,11 @@ export default function Home() {
             <p style={{ color: 'var(--parch-dim)', fontSize: 14 }}>
               {autoRetryRef.current > 0 ? 'Agentes re-procesando — el generador espera' : 'Ensamblando secciones · aplicando formato · construyendo .docx'}
             </p>
+            {extractedImages.length > 0 && (
+              <p style={{ color: 'rgba(200,196,190,0.4)', fontSize: 12, marginTop: 8 }}>
+                Comprimiendo {extractedImages.length} imágenes…
+              </p>
+            )}
           </div>
         )}
 
@@ -288,10 +350,9 @@ export default function Home() {
           </>
         )}
 
-        {/* ICR — spinner + reporte (sin Revisión) */}
+        {/* ICR */}
         {(step === 'icr' || step === 'done') && (
           <div style={{ marginTop: 20 }}>
-            {/* Loading spinner — visible gracias al auto-scroll */}
             {icrLoading && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '20px 24px', borderRadius: 10, background: 'rgba(92,52,114,0.1)', border: '1px solid rgba(92,52,114,0.25)', marginBottom: 16 }}>
                 <div style={{ width: 20, height: 20, border: '2px solid rgba(92,52,114,0.3)', borderTop: '2px solid var(--amatista)', borderRadius: '50%', animation: 'spin-slow 1s linear infinite', flexShrink: 0 }} />
@@ -301,14 +362,13 @@ export default function Home() {
                 </div>
               </div>
             )}
-            {/* Reporte ICR (cuando termina) */}
             {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
             {step === 'icr' && !icrLoading && <ICRReportView report={null as any} loading={false} />}
             {icrReport && <ICRReportView report={icrReport} loading={false} />}
           </div>
         )}
 
-        {/* Download bar — done step */}
+        {/* Download bar */}
         {step === 'done' && output && (
           <div style={{ marginTop: 24, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' as const }}>
             <button className="df-btn-primary" onClick={handleDownload} style={{ padding: '12px 32px', fontSize: 15 }}>⬇ Descargar .docx</button>
