@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import NavTabs from '@/components/NavTabs'
 
 export const metadata: Metadata = {
   title: 'Document Factory · ForumPHs',
@@ -19,7 +20,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        <NavTabs />
+        {children}
+      </body>
     </html>
   )
 }
