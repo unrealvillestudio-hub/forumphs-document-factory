@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import type { ReactNode } from 'react';
 
 /* ─── Constants ─────────────────────────────────────────────────────────── */
 const BUILDINGS = [
@@ -72,7 +73,7 @@ function DonutChart({ kpis }: { kpis: KPIs }) {
 
   const cx = 60, cy = 60, r = 48, inner = 30;
   let angle = -Math.PI / 2;
-  const paths: React.ReactNode[] = [];
+  const paths: ReactNode[] = [];
 
   slices.forEach((sl, i) => {
     const sweep = (sl.value / total) * 2 * Math.PI;
@@ -287,6 +288,7 @@ export default function BIPage() {
   const [step, setStep] = useState('');
   const [result, setResult] = useState<{ kpis: KPIs; narrativa: string; informe: { id: string; building_name: string }; cpa_disclaimer: string } | null>(null);
   const [error, setError] = useState('');
+  const [htmlLoading, setHtmlLoading] = useState(false);
 
   const [manual, setManual] = useState<ManualInput>({
     cuota_mensual_total: 0, monto_recaudado: 0, monto_pendiente: 0,
@@ -377,9 +379,9 @@ export default function BIPage() {
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error ?? 'Error del servidor');
 
-      setResult({ kpis: data.kpis, narrativa: data.narrativa, informe: { id: data.informe?.id, building_name: data.informe?.building_name ?? building?.name ?? '' }, cpa_disclaimer: data.cpa_disclaimer });
+      setResult({ kpis: data.kpis, narrativa: data.narrativa, informe: { id: data.informe?.id ?? '', building_name: data.informe?.building_name ?? building?.name ?? '' }, cpa_disclaimer: data.cpa_disclaimer });
       if (!eeffPreliminar) {
-        setEeffPreliminar({ id: data.informe?.id, status: 'borrador', created_at: new Date().toISOString() });
+        setEeffPreliminar({ id: data.informe?.id ?? '', status: 'borrador', created_at: new Date().toISOString() });
       }
       setStep('');
     } catch (e) { setError(String(e)); }
@@ -397,6 +399,7 @@ export default function BIPage() {
     } catch (e) { setError(String(e)); }
   }
 
+
   const displayKpis: KPIs | null = result?.kpis ?? (mode === 'auto' ? autoKpis : null);
   const displayMora: MoraUnit[] = mode === 'auto' ? autoMora : [
     ...(manual.mora_fase_i ?? []).map(u => ({ ...u, fase: 'FASE_I' })),
@@ -404,6 +407,44 @@ export default function BIPage() {
     ...(manual.mora_fase_iii ?? []).map(u => ({ ...u, fase: 'FASE_III' })),
     ...(manual.mora_fase_iv ?? []).map(u => ({ ...u, fase: 'FASE_IV' })),
   ];
+
+  async function generateHTML() {
+    if (!result || !buildingId) return;
+    setHtmlLoading(true);
+    try {
+      const b = BUILDINGS.find(b => b.id === buildingId);
+      const r = await fetch('/api/bi/html', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          brand_id: 'ForumPHs',
+          building_name: result.informe.building_name,
+          building_units: b?.units ?? 0,
+          building_tier: 'LEGACY',
+          periodo,
+          mes_nombre: mesNombre,
+          kpis: result.kpis,
+          mora_units: displayMora,
+          narrativa: result.narrativa,
+          eeff_status: eeffPreliminar?.status ?? 'borrador',
+          recargo_enabled: false,
+        }),
+      });
+      const data = await r.json();
+      if (data.html) {
+        const blob = new Blob([data.html], { type: 'text/html;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = data.filename ?? `FPHs_BI_${periodo}.html`;
+        a.click();
+        URL.revokeObjectURL(url);
+        // Also open in new tab for preview
+        window.open(url, '_blank');
+      }
+    } catch (e) { setError(String(e)); }
+    finally { setHtmlLoading(false); }
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--carbon, #1C2233)', color: '#F0EDE8', fontFamily: 'DM Sans, sans-serif' }}>
@@ -543,10 +584,16 @@ export default function BIPage() {
                   </div>
                   <div style={{ fontSize: 12, color: 'rgba(240,237,232,0.45)', marginTop: 3, fontFamily: 'EB Garamond, serif', fontStyle: 'italic' }}>{mesNombre}</div>
                 </div>
-                <button onClick={() => window.print()} className="no-print"
-                  style={{ fontSize: 10, color: '#EAD9F5', background: 'rgba(92,52,114,0.2)', border: '1px solid rgba(92,52,114,0.4)', borderRadius: 7, padding: '5px 12px', cursor: 'pointer' }}>
-                  🖨 PDF
-                </button>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button onClick={() => window.print()} className="no-print"
+                    style={{ fontSize: 10, color: 'rgba(200,196,190,0.5)', background: 'transparent', border: '1px solid rgba(92,52,114,0.25)', borderRadius: 7, padding: '5px 12px', cursor: 'pointer' }}>
+                    🖨 PDF
+                  </button>
+                  <button onClick={generateHTML} disabled={htmlLoading} className="no-print"
+                    style={{ fontSize: 10, color: '#EAD9F5', background: htmlLoading ? 'rgba(92,52,114,0.15)' : 'rgba(92,52,114,0.3)', border: '1px solid rgba(92,52,114,0.5)', borderRadius: 7, padding: '5px 12px', cursor: htmlLoading ? 'not-allowed' : 'pointer', fontWeight: 600 }}>
+                    {htmlLoading ? '⏳ Generando…' : '⬇ Suite HTML'}
+                  </button>
+                </div>
               </div>
 
               {/* EEFF status */}
