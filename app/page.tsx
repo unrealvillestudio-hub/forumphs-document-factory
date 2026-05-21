@@ -280,7 +280,7 @@ export default function Home() {
             {!icrLoading && icrReport && (
               <ICRResolution
                 findings={icrReport.findings}
-                blocks={formalizedBlocks as ProcessedBlock[]}
+                blocks={formalizedBlocks as unknown as ProcessedBlock[]}
                 onComplete={handleICRComplete}
                 onBack={() => setStage('qa')}
               />
