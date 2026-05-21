@@ -256,7 +256,7 @@ export default function Home() {
       `}</style>
 
       {/* Top bar */}
-      <div style={{ position: 'sticky', top: 0, zIndex: 100, background: 'rgba(28,34,51,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(92,52,114,0.2)', padding: '0 32px', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div style={{ position: 'sticky', top: 44, zIndex: 100, background: 'rgba(28,34,51,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(92,52,114,0.2)', padding: '0 32px', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/FPHS_logo-wt.png" alt="ForumPHs" style={{ height: 20, width: 'auto' }} />
