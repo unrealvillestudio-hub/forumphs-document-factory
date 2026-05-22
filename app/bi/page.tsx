@@ -1,682 +1,577 @@
-'use client';
+'use client'
 
-import { useState, useEffect, useCallback } from 'react';
-import type { ReactNode } from 'react';
+import { useState, useCallback } from 'react'
 
-/* ─── Constants ─────────────────────────────────────────────────────────── */
-const BUILDINGS = [
-  { id: '2b61944c-6a14-4177-a870-7bbecea17803', name: 'Venezia Tower',          units: 182 },
-  { id: 'd30e6888-1fc3-43bc-960c-94a012b753d0', name: 'PH Lefevre 75 Don Enrique', units: 184 },
-  { id: 'e90da0fd-bb6e-4e4d-9015-50e0c17a1794', name: 'PH Los Alamos',           units: 329 },
-  { id: '4a798598-3b94-438e-9b49-bdc15985d365', name: 'PH Luxor Towers 300',     units: 143 },
-  { id: '33560559-1fec-47fc-9086-206817a00153', name: 'PH Torres de Castilla',   units: 305 },
-  { id: '16a68732-256d-49d6-ae47-adcd72225c1a', name: 'PH Firenze Tower',        units: 79  },
-  { id: '3429020f-c002-42c8-97d3-afd5ea2552a2', name: 'PH Plaza España',         units: 71  },
-  { id: '7e11008d-89da-4228-8e16-39bb24d0b37f', name: 'PH Parque Central Arraijan', units: 81 },
-];
+// ─── TYPES ──────────────────────────────────────────────────────
+interface BuildingOption { id: string; name: string }
 
-const FASE_CONFIG = {
-  AL_DIA:  { label: 'Al día',   color: '#4ADE80', bg: 'rgba(74,222,128,0.12)' },
-  FASE_I:  { label: 'Fase I',   color: '#EAD9F5', bg: 'rgba(234,217,245,0.12)' },
-  FASE_II: { label: 'Fase II',  color: '#F5C07A', bg: 'rgba(245,192,122,0.12)' },
-  FASE_III:{ label: 'Fase III', color: '#F07A7A', bg: 'rgba(240,122,122,0.12)' },
-  FASE_IV: { label: 'Fase IV',  color: '#E05050', bg: 'rgba(224,80,80,0.12)'  },
-};
-
-const STATUS_CONFIG: Record<string, { label: string; color: string; next?: string; nextLabel?: string }> = {
-  borrador:      { label: 'Borrador',       color: '#9090A0', next: 'enviado_jd',    nextLabel: 'Enviar a JD →' },
-  enviado_jd:    { label: 'Enviado a JD',   color: '#EAD9F5', next: 'pendiente_cpa', nextLabel: 'Enviar a CPA →' },
-  pendiente_cpa: { label: 'Pendiente CPA',  color: '#F5C07A', next: 'oficial',       nextLabel: 'Marcar como Oficial →' },
-  oficial:       { label: 'Oficial ✓',      color: '#4ADE80' },
-};
-
-const CPA_DISCLAIMER = 'Los estados e indicadores financieros presentados son preliminares y están sujetos a revisión y firma por la Contadora Pública Autorizada Marlene Molina, C.P.A. Nº 0488-2020.';
-
-/* ─── Types ─────────────────────────────────────────────────────────────── */
-interface KPIs {
-  total_unidades: number;
-  unidades_al_dia: number;
-  unidades_mora: number;
-  porcentaje_cobro: number;
-  monto_esperado: number;
-  monto_recaudado: number;
-  monto_pendiente: number;
-  mora_fase_i_count: number; mora_fase_i_monto: number;
-  mora_fase_ii_count: number; mora_fase_ii_monto: number;
-  mora_fase_iii_count: number; mora_fase_iii_monto: number;
-  mora_fase_iv_count: number; mora_fase_iv_monto: number;
-  mora_pct_total: number;
-  recargo_mes: number;
+interface KPIData {
+  recaudacion_pct:  number
+  recaudacion_total: number
+  cuota_esperada:   number
+  mora_total:       number
+  mora_pct:         number
+  unidades_total:   number
+  unidades_al_dia:  number
+  unidades_mora:    number
+  fase_i:  number
+  fase_ii: number
+  fase_iii: number
+  fase_iv: number
+  margen_operativo?: number
+  ingresos_totales?: number
+  gastos_totales?:   number
 }
 
-interface MoraUnit { unit_code: string; meses_mora: number; monto_pendiente: number; fase: string; }
-interface EeffPreliminar { id: string; status: string; created_at: string; }
-
-interface ManualInput extends Partial<KPIs> {
-  cuota_mensual_total?: number;
-  mora_fase_i: MoraUnit[];
-  mora_fase_ii: MoraUnit[];
-  mora_fase_iii: MoraUnit[];
-  mora_fase_iv: MoraUnit[];
+interface EEFFData {
+  status: 'borrador' | 'enviado_jd' | 'pendiente_cpa' | 'oficial'
+  ingresos: number
+  gastos:   number
+  utilidad: number
+  margen:   number
+  period:   string
 }
 
-/* ─── SVG Charts ────────────────────────────────────────────────────────── */
-function DonutChart({ kpis }: { kpis: KPIs }) {
-  const total = kpis.total_unidades || 1;
-  const slices = [
-    { key: 'AL_DIA',   value: kpis.unidades_al_dia },
-    { key: 'FASE_I',   value: kpis.mora_fase_i_count },
-    { key: 'FASE_II',  value: kpis.mora_fase_ii_count },
-    { key: 'FASE_III', value: kpis.mora_fase_iii_count },
-    { key: 'FASE_IV',  value: kpis.mora_fase_iv_count },
-  ].filter(s => s.value > 0) as Array<{ key: keyof typeof FASE_CONFIG; value: number }>;
-
-  const cx = 60, cy = 60, r = 48, inner = 30;
-  let angle = -Math.PI / 2;
-  const paths: ReactNode[] = [];
-
-  slices.forEach((sl, i) => {
-    const sweep = (sl.value / total) * 2 * Math.PI;
-    if (sweep < 0.01) return;
-    const x1 = cx + r * Math.cos(angle), y1 = cy + r * Math.sin(angle);
-    const x2 = cx + r * Math.cos(angle + sweep), y2 = cy + r * Math.sin(angle + sweep);
-    const ix1 = cx + inner * Math.cos(angle), iy1 = cy + inner * Math.sin(angle);
-    const ix2 = cx + inner * Math.cos(angle + sweep), iy2 = cy + inner * Math.sin(angle + sweep);
-    const large = sweep > Math.PI ? 1 : 0;
-    paths.push(
-      <path key={i}
-        d={`M${ix1},${iy1} L${x1},${y1} A${r},${r} 0 ${large},1 ${x2},${y2} L${ix2},${iy2} A${inner},${inner} 0 ${large},0 ${ix1},${iy1} Z`}
-        fill={FASE_CONFIG[sl.key].color} opacity={0.85} />
-    );
-    angle += sweep;
-  });
-
-  return (
-    <svg viewBox="0 0 120 120" width={100} height={100}>
-      {paths}
-      <text x={cx} y={cy - 4} textAnchor="middle" fill="#F0EDE8" fontSize={14} fontWeight={700} fontFamily="DM Sans, sans-serif">
-        {kpis.porcentaje_cobro?.toFixed(0)}%
-      </text>
-      <text x={cx} y={cy + 10} textAnchor="middle" fill="rgba(240,237,232,0.45)" fontSize={7} fontFamily="DM Sans, sans-serif">cobro</text>
-    </svg>
-  );
+interface BIData {
+  building_name: string
+  period: string
+  kpis: KPIData
+  eeff?: EEFFData
 }
 
-function CobroBar({ pct }: { pct: number }) {
-  const w = Math.min(100, Math.max(0, pct));
-  const color = w >= 90 ? '#4ADE80' : w >= 70 ? '#EAD9F5' : w >= 50 ? '#F5C07A' : '#F07A7A';
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'rgba(240,237,232,0.5)', marginBottom: 6 }}>
-        <span>% de cobro</span><span style={{ color, fontWeight: 600 }}>{pct.toFixed(1)}%</span>
-      </div>
-      <div style={{ height: 6, background: 'rgba(92,52,114,0.2)', borderRadius: 3, overflow: 'hidden' }}>
-        <div style={{ height: '100%', width: `${w}%`, background: color, borderRadius: 3, transition: 'width 0.6s ease' }} />
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: 'rgba(240,237,232,0.25)', marginTop: 3 }}>
-        <span>0%</span><span>50%</span><span>100%</span>
-      </div>
-    </div>
-  );
+// ─── CONSTANTS ──────────────────────────────────────────────────
+const BUILDINGS: BuildingOption[] = [
+  { id: '2b61944c-6a14-4177-a870-7bbecea17803', name: 'Venezia Tower' },
+  { id: 'd30e6888-1fc3-43bc-960c-94a012b753d0', name: 'PH Lefevre 75 Don Enrique' },
+  { id: 'e90da0fd-bb6e-4e4d-9015-50e0c17a1794', name: 'PH Los Álamos' },
+  { id: '4a798598-3b94-438e-9b49-bdc15985d365', name: 'PH Luxor Towers 300' },
+  { id: '33560559-1fec-47fc-9086-206817a00153', name: 'PH Torres de Castilla' },
+  { id: '16a68732-256d-49d6-ae47-adcd72225c1a', name: 'PH Firenze Tower' },
+  { id: '3429020f-c002-42c8-97d3-afd5ea2552a2', name: 'PH Plaza España' },
+  { id: '7e11008d-89da-4228-8e16-39bb24d0b37f', name: 'PH Parque Central Arraiján' },
+]
+
+const EEFF_STATES = {
+  borrador:      { label: 'Borrador',         color: 'rgba(184,176,168,0.55)', next: 'enviado_jd' },
+  enviado_jd:    { label: 'Enviado a JD',     color: '#FBBF24',                next: 'pendiente_cpa' },
+  pendiente_cpa: { label: 'Pendiente CPA',    color: '#E8855A',                next: 'oficial' },
+  oficial:       { label: 'Oficial',          color: '#4ADE80',                next: null },
+} as const
+
+// ─── HELPERS ────────────────────────────────────────────────────
+const fmt$ = (n: number) =>
+  '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+const fmtPct = (n: number) => n.toFixed(1) + '%'
+
+const moraPctColor = (pct: number) => {
+  if (pct < 10) return 'var(--success, #4ADE80)'
+  if (pct < 20) return 'var(--warning, #FBBF24)'
+  if (pct < 35) return '#E8855A'
+  return 'var(--terra, #C4622D)'
 }
 
-/* ─── KPI Card ───────────────────────────────────────────────────────────── */
-function KpiCard({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: boolean }) {
-  return (
-    <div style={{
-      background: accent ? 'rgba(92,52,114,0.18)' : 'rgba(28,34,51,0.8)',
-      border: `1px solid ${accent ? 'rgba(92,52,114,0.5)' : 'rgba(92,52,114,0.15)'}`,
-      borderRadius: 10, padding: '14px 16px',
-    }}>
-      <div style={{ fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'rgba(196,98,45,0.85)', marginBottom: 5 }}>{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 700, color: '#F0EDE8', fontFamily: 'DM Sans, sans-serif', lineHeight: 1 }}>{value}</div>
-      {sub && <div style={{ fontSize: 10, color: 'rgba(240,237,232,0.4)', marginTop: 4 }}>{sub}</div>}
-    </div>
-  );
+const currentPeriod = () => {
+  const d = new Date()
+  d.setMonth(d.getMonth() - 1)
+  return d.toISOString().slice(0, 7)
 }
 
-/* ─── Mora Phase Row ─────────────────────────────────────────────────────── */
-function FaseRow({ fase, count, monto, units }: { fase: keyof typeof FASE_CONFIG; count: number; monto: number; units?: MoraUnit[] }) {
-  const [open, setOpen] = useState(false);
-  const cfg = FASE_CONFIG[fase];
-  if (!count) return null;
-  return (
-    <div style={{ marginBottom: 2 }}>
-      <div
-        onClick={() => units?.length ? setOpen(o => !o) : undefined}
-        style={{
-          display: 'flex', alignItems: 'center', gap: 10,
-          padding: '8px 12px', background: cfg.bg,
-          border: `1px solid ${cfg.color}30`,
-          borderRadius: open ? '8px 8px 0 0' : 8,
-          cursor: units?.length ? 'pointer' : 'default',
-        }}>
-        <span style={{ width: 8, height: 8, borderRadius: '50%', background: cfg.color, flexShrink: 0 }} />
-        <span style={{ fontSize: 12, fontWeight: 600, color: cfg.color, flex: 1 }}>{cfg.label}</span>
-        <span style={{ fontSize: 12, color: 'rgba(240,237,232,0.6)' }}>{count} uds</span>
-        <span style={{ fontSize: 12, color: 'rgba(240,237,232,0.5)', minWidth: 80, textAlign: 'right' }}>
-          ${monto.toFixed(2)}
-        </span>
-        {units?.length ? <span style={{ fontSize: 10, color: 'rgba(240,237,232,0.3)' }}>{open ? '▲' : '▼'}</span> : null}
-      </div>
-      {open && units && units.length > 0 && (
-        <div style={{ border: `1px solid ${cfg.color}20`, borderTop: 'none', borderRadius: '0 0 8px 8px', overflow: 'hidden' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-            <thead>
-              <tr style={{ background: 'rgba(14,16,24,0.5)' }}>
-                {['Unidad', 'Meses', 'Pendiente'].map(h => (
-                  <th key={h} style={{ padding: '6px 10px', textAlign: 'left', color: 'rgba(240,237,232,0.4)', fontWeight: 500, letterSpacing: '0.06em', fontSize: 9, textTransform: 'uppercase' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {units.map((u, i) => (
-                <tr key={i} style={{ borderTop: '1px solid rgba(92,52,114,0.08)' }}>
-                  <td style={{ padding: '6px 10px', color: '#F0EDE8', fontWeight: 600 }}>{u.unit_code}</td>
-                  <td style={{ padding: '6px 10px', color: 'rgba(240,237,232,0.6)' }}>{u.meses_mora}</td>
-                  <td style={{ padding: '6px 10px', color: 'rgba(240,237,232,0.6)' }}>${u.monto_pendiente.toFixed(2)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
+// Cinzel label helper — Firma 5
+const cinzelLabel = (color = 'var(--dust, #B8B0A8)'): React.CSSProperties => ({
+  fontFamily: "'Cinzel', serif",
+  fontSize: '9px',
+  fontWeight: 600,
+  letterSpacing: '0.22em',
+  textTransform: 'uppercase',
+  color,
+})
 
-/* ─── EEFF Status Bar ────────────────────────────────────────────────────── */
-function EeffStatusBar({ eeff, onStatusChange }: { eeff: EeffPreliminar; onStatusChange: (id: string, status: string) => void }) {
-  const cfg = STATUS_CONFIG[eeff.status] ?? STATUS_CONFIG.borrador;
-  const steps = ['borrador', 'enviado_jd', 'pendiente_cpa', 'oficial'];
-  const currentIdx = steps.indexOf(eeff.status);
-
-  return (
-    <div style={{ background: 'rgba(28,34,51,0.8)', border: '1px solid rgba(92,52,114,0.2)', borderRadius: 10, padding: '14px 18px', marginBottom: 16 }}>
-      <div style={{ fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'rgba(196,98,45,0.8)', marginBottom: 12 }}>Estado EEFF Preliminar</div>
-
-      {/* Step indicators */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 14 }}>
-        {steps.map((s, i) => {
-          const scfg = STATUS_CONFIG[s];
-          const done = i < currentIdx;
-          const active = i === currentIdx;
-          return (
-            <div key={s} style={{ display: 'flex', alignItems: 'center', flex: i < steps.length - 1 ? 1 : 'none' }}>
-              <div style={{
-                width: 20, height: 20, borderRadius: '50%', flexShrink: 0,
-                background: done ? '#4ADE80' : active ? scfg.color : 'rgba(92,52,114,0.2)',
-                border: `2px solid ${done ? '#4ADE80' : active ? scfg.color : 'rgba(92,52,114,0.3)'}`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
-                {done && <span style={{ fontSize: 10, color: '#0E1018' }}>✓</span>}
-              </div>
-              <div style={{ fontSize: 9, color: active ? scfg.color : done ? '#4ADE80' : 'rgba(240,237,232,0.3)', marginLeft: 4, marginRight: 8, whiteSpace: 'nowrap' }}>
-                {scfg.label.replace(' ✓', '')}
-              </div>
-              {i < steps.length - 1 && (
-                <div style={{ flex: 1, height: 1, background: done ? '#4ADE80' : 'rgba(92,52,114,0.2)', marginRight: 8 }} />
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {eeff.status !== 'oficial' && cfg.next && (
-        <button
-          onClick={() => onStatusChange(eeff.id, cfg.next!)}
-          style={{
-            fontSize: 11, fontWeight: 600, letterSpacing: '0.06em',
-            padding: '7px 16px', borderRadius: 7, cursor: 'pointer',
-            background: 'rgba(92,52,114,0.25)', border: '1px solid rgba(92,52,114,0.5)',
-            color: '#EAD9F5',
-          }}>
-          {cfg.nextLabel}
-        </button>
-      )}
-
-      {eeff.status !== 'oficial' && (
-        <div style={{ marginTop: 10, fontSize: 10, color: 'rgba(240,237,232,0.35)', lineHeight: 1.6, fontStyle: 'italic' }}>
-          {CPA_DISCLAIMER}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ─── Manual Mora Editor ────────────────────────────────────────────────── */
-const IS = { background: 'rgba(28,34,51,0.8)', border: '1px solid rgba(92,52,114,0.3)', borderRadius: 8, padding: '8px 12px', color: '#F0EDE8', fontSize: 13, width: '100%', boxSizing: 'border-box' as const, outline: 'none' };
-
-function MoraEditor({ fase, units, onChange, color, label }: {
-  fase: string; units: MoraUnit[]; onChange: (u: MoraUnit[]) => void; color: string; label: string;
-}) {
-  const add = () => onChange([...units, { unit_code: '', meses_mora: 1, monto_pendiente: 0, fase }]);
-  const remove = (i: number) => onChange(units.filter((_, j) => j !== i));
-  const upd = (i: number, f: keyof MoraUnit, v: string | number) => {
-    const c = [...units]; c[i] = { ...c[i], [f]: v }; onChange(c);
-  };
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-        <span style={{ fontSize: 11, fontWeight: 600, color, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-          {label} — {units.length} uds
-        </span>
-        <button onClick={add} style={{ fontSize: 11, color, background: `${color}15`, border: `1px solid ${color}40`, borderRadius: 6, padding: '2px 10px', cursor: 'pointer' }}>+ Agregar</button>
-      </div>
-      {units.map((u, i) => (
-        <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1.5fr auto', gap: 5, marginBottom: 5 }}>
-          <input placeholder="Código" value={u.unit_code} onChange={e => upd(i, 'unit_code', e.target.value)} style={IS} />
-          <input type="number" placeholder="Meses" value={u.meses_mora || ''} onChange={e => upd(i, 'meses_mora', Number(e.target.value))} style={IS} />
-          <input type="number" placeholder="$0.00" value={u.monto_pendiente || ''} onChange={e => upd(i, 'monto_pendiente', Number(e.target.value))} style={IS} />
-          <button onClick={() => remove(i)} style={{ background: 'rgba(196,98,45,0.1)', border: '1px solid rgba(196,98,45,0.3)', borderRadius: 6, color: '#C4622D', cursor: 'pointer', padding: '0 10px', fontSize: 14 }}>×</button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/* ─── Main page ─────────────────────────────────────────────────────────── */
+// ════════════════════════════════════════════════════════════════
+//  PAGE
+// ════════════════════════════════════════════════════════════════
 export default function BIPage() {
-  const [buildingId, setBuildingId] = useState('');
-  const [periodo, setPeriodo] = useState(new Date().toISOString().slice(0, 7));
-  const [mode, setMode] = useState<'auto' | 'manual'>('auto');
-  const [autoKpis, setAutoKpis] = useState<KPIs | null>(null);
-  const [autoMora, setAutoMora] = useState<MoraUnit[]>([]);
-  const [eeffPreliminar, setEeffPreliminar] = useState<EeffPreliminar | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [fetching, setFetching] = useState(false);
-  const [step, setStep] = useState('');
-  const [result, setResult] = useState<{ kpis: KPIs; narrativa: string; informe: { id: string; building_name: string }; cpa_disclaimer: string } | null>(null);
-  const [error, setError] = useState('');
-  const [htmlLoading, setHtmlLoading] = useState(false);
+  const [buildingId, setBuildingId]       = useState('')
+  const [period, setPeriod]               = useState(currentPeriod)
+  const [loading, setLoading]             = useState(false)
+  const [data, setData]                   = useState<BIData | null>(null)
+  const [error, setError]                 = useState<string | null>(null)
+  const [eeffStatus, setEeffStatus]       = useState<string>('borrador')
+  const [downloadLoading, setDownloadLoading] = useState(false)
 
-  const [manual, setManual] = useState<ManualInput>({
-    cuota_mensual_total: 0, monto_recaudado: 0, monto_pendiente: 0,
-    unidades_al_dia: 0, total_unidades: 0,
-    mora_fase_i: [], mora_fase_ii: [], mora_fase_iii: [], mora_fase_iv: [],
-  });
+  const buildingName = BUILDINGS.find(b => b.id === buildingId)?.name ?? ''
+  const kpis  = data?.kpis
+  const recPct = kpis?.recaudacion_pct ?? 0
 
-  const building = BUILDINGS.find(b => b.id === buildingId);
-  const mesNombre = periodo ? new Date(periodo + '-02').toLocaleDateString('es-PA', { month: 'long', year: 'numeric' }) : '';
-
-  // Fetch auto data when building + period change
-  const fetchAutoData = useCallback(async () => {
-    if (!buildingId || !periodo) return;
-    setFetching(true);
+  // ── HANDLERS ────────────────────────────────────────────────
+  const handleGenerate = useCallback(async () => {
+    if (!buildingId) return
+    setLoading(true); setError(null); setData(null)
     try {
-      const r = await fetch(`/api/bi/data?building_id=${buildingId}&period=${periodo}`);
-      const d = await r.json();
-      if (d.has_auto_data && d.kpis) {
-        setAutoKpis(d.kpis as KPIs);
-        setAutoMora(d.mora_detail ?? []);
-        setMode('auto');
-      } else {
-        setAutoKpis(null);
-        setAutoMora([]);
-        setMode('manual');
-      }
-      if (d.eeff_preliminar) setEeffPreliminar(d.eeff_preliminar);
-    } catch { setMode('manual'); }
-    finally { setFetching(false); }
-  }, [buildingId, periodo]);
+      const res = await fetch(`/api/bi/data?building_id=${buildingId}&period=${period}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const json: BIData = await res.json()
+      setData(json)
+      setEeffStatus(json.eeff?.status ?? 'borrador')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error al cargar datos')
+    } finally {
+      setLoading(false)
+    }
+  }, [buildingId, period])
 
-  useEffect(() => { fetchAutoData(); }, [fetchAutoData]);
-
-  async function generate() {
-    if (!buildingId) { setError('Selecciona un edificio'); return; }
-    setError(''); setLoading(true); setResult(null);
+  const handleEeffAdvance = useCallback(async () => {
+    const st  = EEFF_STATES[eeffStatus as keyof typeof EEFF_STATES]
+    const next = st?.next
+    if (!next || !buildingId) return
     try {
-      setStep('Consolidando datos…');
-      await new Promise(r => setTimeout(r, 300));
-      setStep('Generando narrativa con IA…');
-
-      const kpisToSend = mode === 'auto' && autoKpis ? autoKpis : {
-        total_unidades: manual.total_unidades ?? building?.units ?? 0,
-        unidades_al_dia: manual.unidades_al_dia ?? 0,
-        unidades_mora: (manual.mora_fase_i?.length ?? 0) + (manual.mora_fase_ii?.length ?? 0) + (manual.mora_fase_iii?.length ?? 0) + (manual.mora_fase_iv?.length ?? 0),
-        monto_recaudado: manual.monto_recaudado ?? 0,
-        monto_pendiente: manual.monto_pendiente ?? 0,
-        porcentaje_cobro: (manual.cuota_mensual_total ?? 0) > 0 ? ((manual.monto_recaudado ?? 0) / (manual.cuota_mensual_total ?? 1)) * 100 : 0,
-        mora_fase_i_count: manual.mora_fase_i?.length ?? 0,
-        mora_fase_ii_count: manual.mora_fase_ii?.length ?? 0,
-        mora_fase_iii_count: manual.mora_fase_iii?.length ?? 0,
-        mora_fase_iv_count: manual.mora_fase_iv?.length ?? 0,
-        mora_fase_i_monto: manual.mora_fase_i?.reduce((s, u) => s + u.monto_pendiente, 0) ?? 0,
-        mora_fase_ii_monto: manual.mora_fase_ii?.reduce((s, u) => s + u.monto_pendiente, 0) ?? 0,
-        mora_fase_iii_monto: manual.mora_fase_iii?.reduce((s, u) => s + u.monto_pendiente, 0) ?? 0,
-        mora_fase_iv_monto: manual.mora_fase_iv?.reduce((s, u) => s + u.monto_pendiente, 0) ?? 0,
-        mora_pct_total: 0,
-        recargo_mes: 0,
-        monto_esperado: manual.cuota_mensual_total ?? 0,
-      };
-
-      const allMoraUnits = mode === 'auto' ? autoMora : [
-        ...(manual.mora_fase_i ?? []),
-        ...(manual.mora_fase_ii ?? []),
-        ...(manual.mora_fase_iii ?? []),
-        ...(manual.mora_fase_iv ?? []),
-      ];
-
-      const res = await fetch('/api/bi/generate', {
-        method: 'POST',
+      await fetch('/api/bi/status', {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          building_id: buildingId,
-          periodo,
-          generado_por: 'document-factory-v2',
-          data_input: {
-            ...kpisToSend,
-            cuota_mensual_total: mode === 'manual' ? (manual.cuota_mensual_total ?? 0) : (kpisToSend.monto_esperado ?? 0),
-            mora_fase_i:   allMoraUnits.filter(u => u.fase === 'FASE_I'),
-            mora_fase_ii:  allMoraUnits.filter(u => u.fase === 'FASE_II'),
-            mora_fase_iii: allMoraUnits.filter(u => u.fase === 'FASE_III'),
-            mora_fase_iv:  allMoraUnits.filter(u => u.fase === 'FASE_IV'),
-          },
-        }),
-      });
+        body: JSON.stringify({ building_id: buildingId, period, status: next }),
+      })
+      setEeffStatus(next)
+    } catch (_) { /* silent */ }
+  }, [eeffStatus, buildingId, period])
 
-      setStep('Guardando informe…');
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error ?? 'Error del servidor');
-
-      setResult({ kpis: data.kpis, narrativa: data.narrativa, informe: { id: data.informe?.id ?? '', building_name: data.informe?.building_name ?? building?.name ?? '' }, cpa_disclaimer: data.cpa_disclaimer });
-      if (!eeffPreliminar) {
-        setEeffPreliminar({ id: data.informe?.id ?? '', status: 'borrador', created_at: new Date().toISOString() });
-      }
-      setStep('');
-    } catch (e) { setError(String(e)); }
-    finally { setLoading(false); }
-  }
-
-  async function handleStatusChange(id: string, status: string) {
+  const handleDownload = useCallback(async () => {
+    if (!buildingId) return
+    setDownloadLoading(true)
     try {
-      const r = await fetch('/api/bi/status', {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, status }),
-      });
-      const d = await r.json();
-      if (d.eeff_preliminar) setEeffPreliminar(d.eeff_preliminar);
-    } catch (e) { setError(String(e)); }
-  }
+      const res  = await fetch(`/api/bi/html?building_id=${buildingId}&period=${period}`)
+      const html = await res.text()
+      const blob = new Blob([html], { type: 'text/html' })
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      a.href     = url
+      a.download = `Informe_BI_${buildingName.replace(/ /g, '_')}_${period}.html`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (_) { /* silent */ }
+    finally { setDownloadLoading(false) }
+  }, [buildingId, period, buildingName])
 
-
-  const displayKpis: KPIs | null = result?.kpis ?? (mode === 'auto' ? autoKpis : null);
-  const displayMora: MoraUnit[] = mode === 'auto' ? autoMora : [
-    ...(manual.mora_fase_i ?? []).map(u => ({ ...u, fase: 'FASE_I' })),
-    ...(manual.mora_fase_ii ?? []).map(u => ({ ...u, fase: 'FASE_II' })),
-    ...(manual.mora_fase_iii ?? []).map(u => ({ ...u, fase: 'FASE_III' })),
-    ...(manual.mora_fase_iv ?? []).map(u => ({ ...u, fase: 'FASE_IV' })),
-  ];
-
-  async function generateHTML() {
-    if (!result || !buildingId) return;
-    setHtmlLoading(true);
-    try {
-      const b = BUILDINGS.find(b => b.id === buildingId);
-      const r = await fetch('/api/bi/html', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          brand_id: 'ForumPHs',
-          building_name: result.informe.building_name,
-          building_units: b?.units ?? 0,
-          building_tier: 'LEGACY',
-          periodo,
-          mes_nombre: mesNombre,
-          kpis: result.kpis,
-          mora_units: displayMora,
-          narrativa: result.narrativa,
-          eeff_status: eeffPreliminar?.status ?? 'borrador',
-          recargo_enabled: false,
-        }),
-      });
-      const data = await r.json();
-      if (data.html) {
-        const blob = new Blob([data.html], { type: 'text/html;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = data.filename ?? `FPHs_BI_${periodo}.html`;
-        a.click();
-        URL.revokeObjectURL(url);
-        // Also open in new tab for preview
-        window.open(url, '_blank');
-      }
-    } catch (e) { setError(String(e)); }
-    finally { setHtmlLoading(false); }
-  }
-
+  // ── RENDER ──────────────────────────────────────────────────
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--carbon, #1C2233)', color: '#F0EDE8', fontFamily: 'DM Sans, sans-serif' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--carbon-d, #0E1018)', color: 'var(--parch, #F0EDE8)', fontFamily: "'DM Sans', sans-serif", paddingBottom: '80px' }}>
 
-      {/* Header */}
-      <div style={{ position: 'sticky', top: 44, zIndex: 100, background: 'rgba(28,34,51,0.97)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(92,52,114,0.2)', padding: '0 28px', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/FPHS_logo-wt.png" alt="ForumPHs" style={{ height: 18, width: 'auto' }} />
-          <span style={{ color: 'rgba(200,196,190,0.2)', fontSize: 11 }}>·</span>
-          <span style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 11, fontWeight: 500, letterSpacing: '0.1em', textTransform: 'uppercase' as const, color: 'rgba(200,196,190,0.4)' }}>
-            Informe BI
-          </span>
-          {fetching && <span style={{ fontSize: 10, color: 'rgba(92,52,114,0.7)', letterSpacing: '0.06em' }}>· cargando datos…</span>}
+      {/* ══ HERO — Firma 2 radial gradient · PSY-AUTHORITY · Firma 6 Cormorant ══ */}
+      {/* L5 T3 ESCALATING_LADDER — Nivel 1: entrada simple, tono institucional   */}
+      <div style={{ position: 'relative', overflow: 'hidden', padding: '48px 0 36px', borderBottom: '1px solid rgba(92,52,114,0.12)' }}>
+
+        {/* Firma 2 — radial gradient Amatista top-right · MAX 1 por output */}
+        <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 80% 10%, rgba(92,52,114,0.18), transparent 60%)', pointerEvents: 'none' }} />
+
+        <div style={{ maxWidth: '960px', margin: '0 auto', padding: '0 28px', position: 'relative', zIndex: 1 }}>
+          {/* Cinzel eyebrow — Firma 5 */}
+          <div style={{ ...cinzelLabel('var(--terra, #C4622D)'), marginBottom: '10px', opacity: 0.85 }}>
+            Informe Mensual de Gestión
+          </div>
+
+          {/* Firma 6 — Cormorant editorial · MAX 1 por output */}
+          <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 'clamp(2.5rem, 6vw, 4.5rem)', fontWeight: 300, fontStyle: 'italic', lineHeight: 1.0, color: 'var(--am-l, #EAD9F5)', marginBottom: '12px', letterSpacing: '0.01em' }}>
+            Suite de Indicadores
+          </div>
+
+          <p style={{ fontFamily: "'EB Garamond', serif", fontSize: '17px', fontStyle: 'italic', color: 'rgba(240,237,232,0.4)', margin: 0 }}>
+            Indicadores financieros · Gestión de mora · EEFF preliminar · Día 5 del mes
+          </p>
         </div>
-        {mode === 'auto' && autoKpis && (
-          <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 20, background: 'rgba(74,222,128,0.1)', border: '1px solid rgba(74,222,128,0.3)', color: '#4ADE80', letterSpacing: '0.06em' }}>
-            ● Datos automáticos
-          </span>
-        )}
-        {mode === 'manual' && !fetching && (
-          <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 20, background: 'rgba(245,192,122,0.1)', border: '1px solid rgba(245,192,122,0.3)', color: '#F5C07A', letterSpacing: '0.06em' }}>
-            ✎ Entrada manual
-          </span>
-        )}
       </div>
 
-      <div style={{ maxWidth: 960, margin: '0 auto', padding: '32px 24px 120px', display: 'grid', gridTemplateColumns: result ? '380px 1fr' : '1fr', gap: 28 }}>
+      {/* ══ MAIN ══ */}
+      <div style={{ maxWidth: '960px', margin: '0 auto', padding: '32px 28px', display: 'grid', gap: '20px' }}>
 
-        {/* ── FORM ── */}
-        <div>
-          <div style={{ marginBottom: 28 }}>
-            <div style={{ fontSize: 10, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#C4622D', marginBottom: 6 }}>Informe Mensual de Gestión</div>
-            <h1 style={{ fontSize: 32, fontWeight: 800, color: '#F0EDE8', margin: 0, lineHeight: 1.1 }}>Módulo BI</h1>
-            <p style={{ fontSize: 13, color: 'rgba(240,237,232,0.4)', marginTop: 6, fontFamily: 'EB Garamond, serif', fontStyle: 'italic' }}>
-              Indicadores financieros + narrativa ejecutiva · Día 5 del mes
-            </p>
+        {/* ── T3 L1 · Selector — forma simple, baja densidad ── */}
+        <div style={{ background: 'var(--carbon, #1C2233)', border: '1px solid rgba(92,52,114,0.2)', borderRadius: '10px', padding: '24px' }}>
+          <div style={{ ...cinzelLabel('var(--terra, #C4622D)'), marginBottom: '18px' }}>
+            1 · Edificio &amp; Período
           </div>
-
-          {/* Edificio + Periodo */}
-          <div style={{ background: 'rgba(28,34,51,0.6)', border: '1px solid rgba(92,52,114,0.2)', borderRadius: 12, padding: 20, marginBottom: 16 }}>
-            <div style={{ fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#C4622D', marginBottom: 14 }}>1 · Edificio & Período</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-              <div>
-                <label style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(240,237,232,0.45)', display: 'block', marginBottom: 5 }}>Edificio</label>
-                <select value={buildingId} onChange={e => setBuildingId(e.target.value)} style={{ ...IS, cursor: 'pointer' }}>
-                  <option value="">— Seleccionar —</option>
-                  {BUILDINGS.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(240,237,232,0.45)', display: 'block', marginBottom: 5 }}>Período</label>
-                <input type="month" value={periodo} onChange={e => setPeriodo(e.target.value)} style={{ ...IS, cursor: 'pointer' }} />
-              </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '18px' }}>
+            <div>
+              <label style={{ ...cinzelLabel(), display: 'block', marginBottom: '6px', fontSize: '8px' }}>Edificio</label>
+              <select
+                value={buildingId}
+                onChange={e => setBuildingId(e.target.value)}
+                style={{ background: 'rgba(14,16,24,0.85)', border: '1px solid rgba(92,52,114,0.35)', borderRadius: '6px', padding: '9px 12px', color: 'var(--parch, #F0EDE8)', fontSize: '13px', width: '100%', outline: 'none', cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" }}
+              >
+                <option value="">— Seleccionar —</option>
+                {BUILDINGS.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
             </div>
-            {building && (
-              <div style={{ fontSize: 11, color: 'rgba(240,237,232,0.4)', background: 'rgba(92,52,114,0.08)', borderRadius: 7, padding: '7px 10px' }}>
-                {building.units} unidades · {mesNombre}
-                {autoKpis && <span style={{ marginLeft: 8, color: '#4ADE80' }}>· Datos disponibles en Supabase</span>}
-              </div>
-            )}
+            <div>
+              <label style={{ ...cinzelLabel(), display: 'block', marginBottom: '6px', fontSize: '8px' }}>Período</label>
+              <input
+                type="month"
+                value={period}
+                onChange={e => setPeriod(e.target.value)}
+                style={{ background: 'rgba(14,16,24,0.85)', border: '1px solid rgba(92,52,114,0.35)', borderRadius: '6px', padding: '9px 12px', color: 'var(--parch, #F0EDE8)', fontSize: '13px', width: '100%', outline: 'none', cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" }}
+              />
+            </div>
           </div>
-
-          {/* Manual input — only shown when no auto data */}
-          {mode === 'manual' && !fetching && (
-            <>
-              <div style={{ background: 'rgba(28,34,51,0.6)', border: '1px solid rgba(92,52,114,0.2)', borderRadius: 12, padding: 20, marginBottom: 16 }}>
-                <div style={{ fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#C4622D', marginBottom: 14 }}>2 · Datos Financieros</div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  {[
-                    { label: 'Cuota total esperada ($)', key: 'cuota_mensual_total' },
-                    { label: 'Monto recaudado ($)',      key: 'monto_recaudado' },
-                    { label: 'Monto pendiente ($)',      key: 'monto_pendiente' },
-                    { label: 'Unidades al día',          key: 'unidades_al_dia' },
-                  ].map(f => (
-                    <div key={f.key}>
-                      <label style={{ fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(240,237,232,0.4)', display: 'block', marginBottom: 4 }}>{f.label}</label>
-                      <input type="number" step="0.01" placeholder="0.00"
-                        value={(manual[f.key as keyof ManualInput] as number) || ''}
-                        onChange={e => setManual(p => ({ ...p, [f.key]: Number(e.target.value) }))}
-                        style={IS} />
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div style={{ background: 'rgba(28,34,51,0.6)', border: '1px solid rgba(92,52,114,0.2)', borderRadius: 12, padding: 20, marginBottom: 16 }}>
-                <div style={{ fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#C4622D', marginBottom: 4 }}>3 · Distribución de Mora</div>
-                <div style={{ fontSize: 10, color: 'rgba(240,237,232,0.3)', marginBottom: 14 }}>Código · Meses · Monto pendiente ($)</div>
-                <MoraEditor fase="FASE_I"   label="Fase I — 1-2 meses"   units={manual.mora_fase_i ?? []}   onChange={v => setManual(p => ({ ...p, mora_fase_i: v }))}   color={FASE_CONFIG.FASE_I.color} />
-                <MoraEditor fase="FASE_II"  label="Fase II — 3-4 meses"  units={manual.mora_fase_ii ?? []}  onChange={v => setManual(p => ({ ...p, mora_fase_ii: v }))}  color={FASE_CONFIG.FASE_II.color} />
-                <MoraEditor fase="FASE_III" label="Fase III — 5-6 meses" units={manual.mora_fase_iii ?? []} onChange={v => setManual(p => ({ ...p, mora_fase_iii: v }))} color={FASE_CONFIG.FASE_III.color} />
-                <MoraEditor fase="FASE_IV"  label="Fase IV — 7+ meses"   units={manual.mora_fase_iv ?? []}  onChange={v => setManual(p => ({ ...p, mora_fase_iv: v }))}  color={FASE_CONFIG.FASE_IV.color} />
-              </div>
-            </>
-          )}
-
-          {/* Auto mode summary */}
-          {mode === 'auto' && autoKpis && (
-            <div style={{ background: 'rgba(74,222,128,0.05)', border: '1px solid rgba(74,222,128,0.2)', borderRadius: 12, padding: '12px 16px', marginBottom: 16 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ fontSize: 11, color: '#4ADE80' }}>Datos cargados desde Supabase</div>
-                <button onClick={() => setMode('manual')} style={{ fontSize: 10, color: 'rgba(240,237,232,0.4)', background: 'transparent', border: '1px solid rgba(240,237,232,0.15)', borderRadius: 6, padding: '3px 10px', cursor: 'pointer' }}>
-                  Editar manualmente
-                </button>
-              </div>
-              <div style={{ fontSize: 11, color: 'rgba(240,237,232,0.5)', marginTop: 4 }}>
-                {autoKpis.unidades_al_dia} al día · {autoKpis.unidades_mora} en mora · {autoKpis.porcentaje_cobro?.toFixed(1)}% cobro
-              </div>
-            </div>
-          )}
-
-          {error && (
-            <div style={{ background: 'rgba(196,98,45,0.1)', border: '1px solid rgba(196,98,45,0.4)', borderRadius: 9, padding: '10px 14px', fontSize: 12, color: '#F0A07A', marginBottom: 14 }}>
-              {error}
-            </div>
-          )}
-
-          <button onClick={generate} disabled={loading || !buildingId}
-            style={{ width: '100%', padding: '13px 24px', background: loading ? 'rgba(92,52,114,0.3)' : 'rgba(92,52,114,0.85)', border: '1px solid rgba(92,52,114,0.6)', borderRadius: 10, color: '#F0EDE8', fontSize: 14, fontWeight: 600, letterSpacing: '0.06em', cursor: loading ? 'not-allowed' : 'pointer', transition: 'all 0.2s' }}>
-            {loading ? `⏳ ${step || 'Generando…'}` : '⚡ Generar Informe BI'}
+          <button
+            onClick={handleGenerate}
+            disabled={!buildingId || loading}
+            style={{
+              width: '100%', padding: '11px 24px',
+              background: buildingId && !loading ? 'var(--am, #5C3472)' : 'rgba(92,52,114,0.2)',
+              border: '1px solid rgba(92,52,114,0.45)', borderRadius: '6px',
+              color: 'var(--parch, #F0EDE8)',
+              ...cinzelLabel('var(--parch, #F0EDE8)'),
+              fontSize: '10px',
+              cursor: buildingId && !loading ? 'pointer' : 'not-allowed',
+              transition: 'filter 0.15s, background 0.15s',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px',
+            }}
+          >
+            {loading
+              ? <><Spinner />Cargando datos…</>
+              : 'Generar Informe BI'
+            }
           </button>
         </div>
 
-        {/* ── RESULT ── */}
-        {(result || displayKpis) && (
-          <div>
-            <style>{`@media print { body > *:not(#bi-result) { display:none!important } #bi-result { position:fixed;inset:0;background:white!important;color:#1A1612!important;padding:32px;overflow:auto } .no-print{display:none!important} }`}</style>
+        {/* ── ERROR ── */}
+        {error && (
+          /* Firma 3 — border-left terra en alertas · MAX 2 por output · #1 */
+          <div style={{ background: 'rgba(196,98,45,0.07)', border: '1px solid rgba(196,98,45,0.25)', borderLeft: '3px solid var(--terra, #C4622D)', borderRadius: '8px', padding: '14px 18px', fontSize: '13px', color: 'var(--terra, #C4622D)', fontFamily: "'DM Sans', sans-serif" }}>
+            Error al cargar datos: {error}
+          </div>
+        )}
 
-            <div id="bi-result">
-              {/* Result header */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
-                <div>
-                  <div style={{ fontSize: 9, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#C4622D', marginBottom: 5 }}>Informe Mensual de Gestión</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: '#F0EDE8', lineHeight: 1.2 }}>
-                    {result?.informe.building_name ?? building?.name}
-                  </div>
-                  <div style={{ fontSize: 12, color: 'rgba(240,237,232,0.45)', marginTop: 3, fontFamily: 'EB Garamond, serif', fontStyle: 'italic' }}>{mesNombre}</div>
-                </div>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button onClick={() => window.print()} className="no-print"
-                    style={{ fontSize: 10, color: 'rgba(200,196,190,0.5)', background: 'transparent', border: '1px solid rgba(92,52,114,0.25)', borderRadius: 7, padding: '5px 12px', cursor: 'pointer' }}>
-                    🖨 PDF
-                  </button>
-                  <button onClick={generateHTML} disabled={htmlLoading} className="no-print"
-                    style={{ fontSize: 10, color: '#EAD9F5', background: htmlLoading ? 'rgba(92,52,114,0.15)' : 'rgba(92,52,114,0.3)', border: '1px solid rgba(92,52,114,0.5)', borderRadius: 7, padding: '5px 12px', cursor: htmlLoading ? 'not-allowed' : 'pointer', fontWeight: 600 }}>
-                    {htmlLoading ? '⏳ Generando…' : '⬇ Suite HTML'}
-                  </button>
+        {/* ── SKELETON — T3 L2 (densidad crece) ── */}
+        {loading && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px' }}>
+            {[...Array(4)].map((_, i) => (
+              <div key={i} style={{ height: '120px', borderRadius: '10px', background: 'linear-gradient(90deg, rgba(92,52,114,0.05) 25%, rgba(92,52,114,0.13) 50%, rgba(92,52,114,0.05) 75%)', backgroundSize: '200% 100%', animation: 'shimmer 1.6s ease-in-out infinite' }} />
+            ))}
+          </div>
+        )}
+
+        {/* ══ DATA SECTIONS — visible solo cuando hay datos ══ */}
+        {kpis && !loading && (
+          <>
+            {/* Building / period heading */}
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '16px', paddingTop: '4px' }}>
+              <div>
+                <span style={{ fontFamily: "'EB Garamond', serif", fontSize: '27px', fontWeight: 400, color: 'var(--parch)' }}>
+                  {data?.building_name ?? buildingName}
+                </span>
+                <span style={{ ...cinzelLabel(), marginLeft: '14px', fontSize: '8px', opacity: 0.55 }}>{period}</span>
+              </div>
+              <div style={{ ...cinzelLabel(), fontSize: '8px', opacity: 0.25 }}>T4 · T9</div>
+            </div>
+
+            {/* ── T3 L2 · T9 HEARTBEAT — Firma 1: % Recaudación como protagonista ── */}
+            {/* PSY-TRUST + PSY-AUTHORITY: dato crítico con autoridad institucional   */}
+            <KPIHero kpis={kpis} recPct={recPct} />
+
+            {/* ── T3 L3 · T4 MICRO-TENSIONS — Grid KPIs ── */}
+            {/* Cada card genera y resuelve su propia tensión                         */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px' }}>
+
+              {/* Mora % — Firma 3 #2 si mora crítica */}
+              <KPICard
+                label="Mora Total"
+                value={fmtPct(kpis.mora_pct)}
+                sub={`${kpis.unidades_mora} de ${kpis.unidades_total} uds.`}
+                valueColor={moraPctColor(kpis.mora_pct)}
+                terra={kpis.mora_pct > 20}
+              />
+
+              {/* Unidades al día */}
+              <KPICard
+                label="Al Día"
+                value={String(kpis.unidades_al_dia)}
+                sub={`${fmtPct((kpis.unidades_al_dia / (kpis.unidades_total || 1)) * 100)} del total`}
+                valueColor="var(--success, #4ADE80)"
+              />
+
+              {/* Margen operativo — solo si hay dato */}
+              {kpis.margen_operativo !== undefined && (
+                <KPICard
+                  label="Margen Operativo"
+                  value={fmtPct(kpis.margen_operativo)}
+                  sub={kpis.ingresos_totales && kpis.gastos_totales ? `${fmt$(kpis.ingresos_totales)} − ${fmt$(kpis.gastos_totales)}` : 'ingresos − gastos'}
+                  valueColor={kpis.margen_operativo >= 15 ? 'var(--success)' : kpis.margen_operativo >= 5 ? 'var(--warning)' : 'var(--terra)'}
+                />
+              )}
+
+              {/* Cartera mora $ */}
+              <KPICard
+                label="Cartera Mora"
+                value={fmt$(kpis.mora_total)}
+                sub="acumulado al cierre"
+                valueColor="var(--terra, #C4622D)"
+              />
+            </div>
+
+            {/* ── T3 L4 · CHART mora por fases ── */}
+            <div style={{ background: 'var(--carbon, #1C2233)', border: '1px solid rgba(92,52,114,0.12)', borderRadius: '10px', overflow: 'hidden' }}>
+              <div style={{ padding: '16px 24px 12px', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={cinzelLabel()}>3 · Distribución de Mora por Fase</div>
+                <div style={{ ...cinzelLabel(), fontSize: '8px', opacity: 0.35 }}>unidades inmobiliarias</div>
+              </div>
+              <div style={{ padding: '24px' }}>
+                <MoraFasesChart kpis={kpis} />
+              </div>
+            </div>
+
+            {/* ── T3 L5 · EEFF — máxima densidad institucional ── */}
+            {data?.eeff && (
+              <EEFFSection
+                eeff={data.eeff}
+                status={eeffStatus}
+                onAdvance={handleEeffAdvance}
+              />
+            )}
+
+            {/* ── T3 RESOLUCIÓN · Download Suite HTML ── */}
+            <div style={{ background: 'rgba(92,52,114,0.07)', border: '1px solid rgba(92,52,114,0.28)', borderRadius: '10px', padding: '22px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '20px', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ ...cinzelLabel('var(--am-l, #EAD9F5)'), marginBottom: '6px' }}>Suite HTML · 5 Paneles</div>
+                <div style={{ fontFamily: "'EB Garamond', serif", fontSize: '15px', fontStyle: 'italic', color: 'rgba(240,237,232,0.4)' }}>
+                  Informe autónomo · compartible con la Junta Directiva
                 </div>
               </div>
-
-              {/* EEFF status */}
-              {eeffPreliminar && result && (
-                <EeffStatusBar eeff={eeffPreliminar} onStatusChange={handleStatusChange} />
-              )}
-
-              {/* Charts row */}
-              {displayKpis && (
-                <div style={{ display: 'flex', gap: 16, marginBottom: 16, alignItems: 'center' }}>
-                  <div style={{ background: 'rgba(28,34,51,0.6)', border: '1px solid rgba(92,52,114,0.15)', borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <DonutChart kpis={displayKpis} />
-                    <div>
-                      <div style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(196,98,45,0.7)', marginBottom: 8 }}>Distribución</div>
-                      {(Object.keys(FASE_CONFIG) as Array<keyof typeof FASE_CONFIG>).map(k => {
-                        const countMap: Record<string, number> = { AL_DIA: displayKpis.unidades_al_dia, FASE_I: displayKpis.mora_fase_i_count, FASE_II: displayKpis.mora_fase_ii_count, FASE_III: displayKpis.mora_fase_iii_count, FASE_IV: displayKpis.mora_fase_iv_count };
-                        const c = countMap[k] ?? 0;
-                        if (!c) return null;
-                        return (
-                          <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                            <span style={{ width: 8, height: 8, borderRadius: 2, background: FASE_CONFIG[k].color, flexShrink: 0 }} />
-                            <span style={{ fontSize: 10, color: FASE_CONFIG[k].color }}>{FASE_CONFIG[k].label}</span>
-                            <span style={{ fontSize: 10, color: 'rgba(240,237,232,0.4)', marginLeft: 4 }}>{c}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
-                      <KpiCard label="Recaudado" value={`$${(displayKpis.monto_recaudado ?? 0).toFixed(0)}`} accent />
-                      <KpiCard label="Pendiente" value={`$${(displayKpis.monto_pendiente ?? 0).toFixed(0)}`} />
-                      <KpiCard label="Al día" value={String(displayKpis.unidades_al_dia ?? 0)} sub={`de ${displayKpis.total_unidades ?? 0} uds`} />
-                      <KpiCard label="En mora" value={String(displayKpis.unidades_mora ?? 0)} />
-                    </div>
-                    <CobroBar pct={displayKpis.porcentaje_cobro ?? 0} />
-                  </div>
-                </div>
-              )}
-
-              {/* Mora phases */}
-              {displayKpis && displayKpis.unidades_mora > 0 && (
-                <div style={{ background: 'rgba(28,34,51,0.6)', border: '1px solid rgba(92,52,114,0.15)', borderRadius: 10, padding: 16, marginBottom: 16 }}>
-                  <div style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#C4622D', marginBottom: 12 }}>Distribución de Mora</div>
-                  {(['FASE_I','FASE_II','FASE_III','FASE_IV'] as const).map(f => {
-                    const countMap = { FASE_I: displayKpis.mora_fase_i_count, FASE_II: displayKpis.mora_fase_ii_count, FASE_III: displayKpis.mora_fase_iii_count, FASE_IV: displayKpis.mora_fase_iv_count };
-                    const montoMap = { FASE_I: displayKpis.mora_fase_i_monto, FASE_II: displayKpis.mora_fase_ii_monto, FASE_III: displayKpis.mora_fase_iii_monto, FASE_IV: displayKpis.mora_fase_iv_monto };
-                    return <FaseRow key={f} fase={f} count={countMap[f] ?? 0} monto={montoMap[f] ?? 0} units={displayMora.filter(u => u.fase === f)} />;
-                  })}
-                </div>
-              )}
-
-              {/* Narrativa */}
-              {result && (
-                <div style={{ background: 'rgba(28,34,51,0.6)', border: '1px solid rgba(92,52,114,0.15)', borderRadius: 10, padding: 18, marginBottom: 14 }}>
-                  <div style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#C4622D', marginBottom: 12 }}>Análisis Ejecutivo</div>
-                  <div style={{ fontSize: 13, lineHeight: 1.8, color: 'rgba(240,237,232,0.82)', fontFamily: 'EB Garamond, serif', whiteSpace: 'pre-line' }}>
-                    {result.narrativa}
-                  </div>
-                </div>
-              )}
-
-              {/* CPA disclaimer — only if not oficial */}
-              {(!eeffPreliminar || eeffPreliminar.status !== 'oficial') && (
-                <div style={{ background: 'rgba(92,52,114,0.05)', border: '1px solid rgba(92,52,114,0.15)', borderRadius: 9, padding: '12px 16px' }}>
-                  <div style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(240,237,232,0.3)', marginBottom: 5 }}>Disclaimer CPA</div>
-                  <div style={{ fontSize: 10, color: 'rgba(240,237,232,0.38)', lineHeight: 1.7 }}>{CPA_DISCLAIMER}</div>
-                </div>
-              )}
+              <button
+                onClick={handleDownload}
+                disabled={downloadLoading}
+                style={{ padding: '10px 22px', background: 'var(--am, #5C3472)', border: '1px solid rgba(92,52,114,0.5)', borderRadius: '6px', color: 'var(--parch)', ...cinzelLabel('var(--parch)'), fontSize: '10px', cursor: downloadLoading ? 'wait' : 'pointer', whiteSpace: 'nowrap', transition: 'filter 0.15s' }}
+              >
+                {downloadLoading ? 'Generando…' : 'Descargar Suite HTML'}
+              </button>
             </div>
-          </div>
+          </>
         )}
       </div>
 
-      <footer style={{ position: 'fixed', bottom: 0, left: 0, right: 0, borderTop: '2px solid #00FFD1', background: '#0F0F0F', padding: '8px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <img src="/FPHS_logo-wt.png" alt="ForumPHs" style={{ height: 14, width: 'auto', opacity: 0.6 }} />
-          <span style={{ fontSize: 9, color: 'rgba(200,196,190,0.3)', letterSpacing: '0.04em' }}>BI v2.0</span>
+      {/* ══ FOOTER — border-top: 2px solid var(--am) — INVIOLABLE ══ */}
+      <footer style={{ position: 'fixed', bottom: 0, left: 0, right: 0, borderTop: '2px solid var(--am, #5C3472)', background: 'rgba(14,16,24,0.97)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', padding: '7px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+        {/* Wordmark HTML/CSS — regla inviolable */}
+        <div style={{ display: 'inline-flex', alignItems: 'baseline', gap: 0, lineHeight: 1 }}>
+          <span style={{ fontFamily: "'EB Garamond', serif", fontWeight: 400, color: 'rgba(240,237,232,0.55)', fontSize: '14px' }}>Forum</span>
+          <span style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, color: 'var(--terra, #C4622D)', letterSpacing: '0.06em', fontSize: '13px' }}>PH</span>
+          <span style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, color: 'var(--terra, #C4622D)', letterSpacing: '0.04em', fontSize: '13px' }}>s</span>
+          <span style={{ fontSize: '9px', color: 'rgba(200,196,190,0.22)', letterSpacing: '0.06em', marginLeft: '8px', fontFamily: "'DM Sans', sans-serif" }}>BI v3.0</span>
         </div>
-        <div style={{ fontSize: 9, color: 'rgba(200,196,190,0.22)', letterSpacing: '0.04em' }}>© 2026 ForumPHs · Ley 284 de 2022</div>
-        <div style={{ fontSize: 9, color: 'rgba(200,196,190,0.25)', letterSpacing: '0.04em' }}>fphs-bi-report · fphs-bi-data · fphs-bi-status</div>
+        <div style={{ fontSize: '9px', color: 'rgba(200,196,190,0.18)', letterSpacing: '0.04em', fontFamily: "'DM Sans', sans-serif" }}>© 2026 ForumPHs · Ley 284 de 2022</div>
+        <div style={{ fontSize: '9px', color: 'rgba(200,196,190,0.2)', letterSpacing: '0.04em', fontFamily: "'DM Sans', sans-serif" }}>fphs-bi-report · fphs-bi-data · fphs-bi-status</div>
       </footer>
+
+      {/* ── Global keyframes ── */}
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@1,300&family=EB+Garamond:ital,wght@0,400;1,400&family=Cinzel:wght@400;600&family=DM+Sans:wght@400;500;600;700&display=swap');
+        @keyframes spin     { to { transform: rotate(360deg); } }
+        @keyframes shimmer  { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+        @keyframes hb-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(92,52,114,0)} 30%{box-shadow:0 0 0 6px rgba(92,52,114,0.18)} 60%{box-shadow:0 0 0 12px rgba(92,52,114,0)} }
+        @keyframes kpi-in   { from{opacity:0;transform:translateY(10px) scale(0.97)} to{opacity:1;transform:none} }
+        @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; } }
+      `}</style>
     </div>
-  );
+  )
+}
+
+// ════════════════════════════════════════════════════════════════
+//  SUB-COMPONENTS
+// ════════════════════════════════════════════════════════════════
+
+// ── Spinner ──────────────────────────────────────────────────────
+function Spinner() {
+  return (
+    <span style={{ width: '13px', height: '13px', border: '2px solid rgba(240,237,232,0.15)', borderTopColor: 'rgba(240,237,232,0.7)', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.8s linear infinite', flexShrink: 0 }} />
+  )
+}
+
+// ── KPI Hero — Firma 1 · T9 HEARTBEAT · MAX 1 por output ────────
+// PSY-TRUST + AUTHORITY: el número más importante, más grande
+function KPIHero({ kpis, recPct }: { kpis: KPIData; recPct: number }) {
+  const heroColor = recPct >= 90 ? 'var(--am-l, #EAD9F5)' : recPct >= 75 ? 'var(--warning, #FBBF24)' : 'var(--terra, #C4622D)'
+  const borderOpacity = recPct >= 90 ? '0.55' : '0.3'
+
+  return (
+    <div style={{ background: 'var(--carbon, #1C2233)', border: `1px solid rgba(92,52,114,${borderOpacity})`, borderRadius: '12px', padding: '28px 32px', position: 'relative', overflow: 'hidden', animation: 'hb-pulse 3s ease-in-out infinite' }}>
+      {/* Ghost number — tensión geométrica 10.3 */}
+      <div style={{ position: 'absolute', fontFamily: "'DM Sans', sans-serif", fontSize: '180px', fontWeight: 700, color: 'rgba(92,52,114,0.04)', lineHeight: 1, top: '-30px', right: '-10px', pointerEvents: 'none', userSelect: 'none', zIndex: 0 }} aria-hidden>
+        {Math.round(recPct)}
+      </div>
+
+      <div style={{ position: 'relative', zIndex: 1 }}>
+        {/* Cinzel label — Firma 5 */}
+        <div style={{ fontFamily: "'Cinzel', serif", fontSize: '9px', fontWeight: 600, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--dust, #B8B0A8)', marginBottom: '8px', opacity: 0.85 }}>
+          Tasa de Recaudación · {kpis.unidades_total} unidades
+        </div>
+
+        {/* Firma 1 — Número protagonista · EB Garamond 80px+ */}
+        <div style={{ fontFamily: "'EB Garamond', serif", fontSize: 'clamp(4rem, 8vw, 6rem)', fontWeight: 400, lineHeight: 1, letterSpacing: '-0.02em', color: heroColor, animation: 'kpi-in 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards' }}>
+          {fmtPct(recPct)}
+        </div>
+
+        {/* Detail row */}
+        <div style={{ display: 'flex', gap: '24px', marginTop: '14px', flexWrap: 'wrap' }}>
+          {[
+            { lbl: 'Recaudado',  val: fmt$(kpis.recaudacion_total), col: 'var(--parch)' },
+            { lbl: 'Esperado',   val: fmt$(kpis.cuota_esperada),    col: 'var(--dust)' },
+            { lbl: 'En mora',    val: fmt$(kpis.mora_total),         col: 'var(--terra)' },
+          ].map(item => (
+            <div key={item.lbl}>
+              <div style={{ fontFamily: "'Cinzel', serif", fontSize: '8px', letterSpacing: '0.15em', textTransform: 'uppercase', color: 'rgba(240,237,232,0.3)', marginBottom: '3px' }}>{item.lbl}</div>
+              <div style={{ fontFamily: "'EB Garamond', serif", fontSize: '20px', fontWeight: 400, color: item.col }}>{item.val}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── KPI Card — T4 micro-tension ──────────────────────────────────
+function KPICard({ label, value, sub, valueColor, terra = false }: {
+  label: string; value: string; sub: string; valueColor: string; terra?: boolean
+}) {
+  return (
+    <div style={{
+      background: 'var(--carbon, #1C2233)',
+      border: terra ? '1px solid rgba(196,98,45,0.35)' : '1px solid rgba(255,255,255,0.06)',
+      /* Firma 3 — border-left terra · MAX 2 por output */
+      borderLeft: terra ? '3px solid var(--terra, #C4622D)' : undefined,
+      borderRadius: '10px',
+      padding: '18px 20px',
+      transition: 'border-color 0.2s',
+    }}>
+      <div style={{ fontFamily: "'Cinzel', serif", fontSize: '9px', fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'var(--dust, #B8B0A8)', marginBottom: '7px' }}>{label}</div>
+      <div style={{ fontFamily: "'EB Garamond', serif", fontSize: 'clamp(1.75rem, 3vw, 2.25rem)', fontWeight: 400, lineHeight: 1, letterSpacing: '-0.01em', color: valueColor, animation: 'kpi-in 0.4s cubic-bezier(0.34,1.56,0.64,1) forwards' }}>{value}</div>
+      <div style={{ fontFamily: "'DM Sans', sans-serif", fontSize: '11px', color: 'rgba(184,176,168,0.5)', marginTop: '6px' }}>{sub}</div>
+    </div>
+  )
+}
+
+// ── Mora Fases Chart — SVG nativo, zero deps ─────────────────────
+function MoraFasesChart({ kpis }: { kpis: KPIData }) {
+  const phases = [
+    { label: 'Al Día',   value: kpis.unidades_al_dia, color: '#4ADE80' },
+    { label: 'Fase I',   value: kpis.fase_i,           color: '#FBBF24' },
+    { label: 'Fase II',  value: kpis.fase_ii,          color: '#E8855A' },
+    { label: 'Fase III', value: kpis.fase_iii,         color: '#C4622D' },
+    { label: 'Fase IV',  value: kpis.fase_iv,          color: '#5C3472' },
+  ]
+  const total  = kpis.unidades_total || 1
+  const maxVal = Math.max(...phases.map(p => p.value), 1)
+
+  const LABEL_W = 72
+  const BAR_H   = 26
+  const BAR_GAP = 14
+  const BAR_MAX = 360
+  const VAL_X   = LABEL_W + BAR_MAX + 12
+  const SVG_W   = LABEL_W + BAR_MAX + 100
+  const SVG_H   = phases.length * (BAR_H + BAR_GAP) + 4
+
+  return (
+    <>
+      <svg viewBox={`0 0 ${SVG_W} ${SVG_H}`} style={{ width: '100%', minWidth: '300px', display: 'block', overflow: 'visible' }} role="img" aria-label="Distribución de mora por fase">
+        {phases.map((ph, i) => {
+          const y    = i * (BAR_H + BAR_GAP)
+          const barW = (ph.value / maxVal) * BAR_MAX
+          const pct  = ((ph.value / total) * 100).toFixed(1)
+          return (
+            <g key={ph.label}>
+              {/* Label — Cinzel / Firma 5 */}
+              <text x={LABEL_W - 8} y={y + BAR_H / 2 + 4} textAnchor="end"
+                style={{ fontFamily: "'Cinzel', serif", fontSize: '8.5px', letterSpacing: '0.12em', fill: 'rgba(184,176,168,0.55)', textTransform: 'uppercase' }}>
+                {ph.label}
+              </text>
+              {/* Track */}
+              <rect x={LABEL_W} y={y} width={BAR_MAX} height={BAR_H} rx={3} fill="rgba(255,255,255,0.04)" />
+              {/* Fill */}
+              {ph.value > 0 && (
+                <rect x={LABEL_W} y={y} width={Math.max(barW, 4)} height={BAR_H} rx={3} fill={ph.color} opacity={0.82} />
+              )}
+              {/* Value — EB Garamond */}
+              <text x={VAL_X} y={y + BAR_H / 2 + 4}
+                style={{ fontFamily: "'EB Garamond', serif", fontSize: '14px', fill: 'rgba(240,237,232,0.65)' }}>
+                {ph.value}
+                <tspan style={{ fontFamily: "'DM Sans', sans-serif", fontSize: '10px', fill: 'rgba(184,176,168,0.38)' }}> ({pct}%)</tspan>
+              </text>
+            </g>
+          )
+        })}
+      </svg>
+
+      {/* Stacked bar summary */}
+      <div style={{ marginTop: '18px', height: '5px', borderRadius: '3px', overflow: 'hidden', display: 'flex', background: 'rgba(255,255,255,0.04)', gap: 0 }} role="presentation">
+        {phases.map(ph => (
+          <div key={ph.label} style={{ width: `${(ph.value / total) * 100}%`, background: ph.color, minWidth: ph.value > 0 ? '3px' : '0' }} />
+        ))}
+      </div>
+    </>
+  )
+}
+
+// ── EEFF Section ─────────────────────────────────────────────────
+function EEFFSection({ eeff, status, onAdvance }: {
+  eeff: EEFFData; status: string; onAdvance: () => void
+}) {
+  const st     = EEFF_STATES[status as keyof typeof EEFF_STATES]
+  const nextSt = st?.next ? EEFF_STATES[st.next as keyof typeof EEFF_STATES] : null
+
+  const rows = [
+    { lbl: 'Ingresos',     val: fmt$(eeff.ingresos), col: 'var(--success, #4ADE80)' },
+    { lbl: 'Gastos',       val: fmt$(eeff.gastos),   col: 'var(--dust, #B8B0A8)' },
+    { lbl: 'Utilidad',     val: fmt$(eeff.utilidad), col: eeff.utilidad >= 0 ? 'var(--am-l, #EAD9F5)' : 'var(--terra, #C4622D)' },
+    { lbl: 'Margen',       val: fmtPct(eeff.margen), col: eeff.margen >= 15 ? 'var(--success)' : eeff.margen >= 5 ? 'var(--warning, #FBBF24)' : 'var(--terra)' },
+  ]
+
+  return (
+    <div style={{ background: 'var(--carbon, #1C2233)', border: '1px solid rgba(92,52,114,0.12)', borderRadius: '10px', overflow: 'hidden' }}>
+      {/* Header */}
+      <div style={{ padding: '16px 24px 12px', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+        <div style={{ fontFamily: "'Cinzel', serif", fontSize: '9px', fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'var(--dust)' }}>
+          4 · Estado Financiero Preliminar
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+          <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: st?.color ?? 'var(--dust)', display: 'inline-block', flexShrink: 0 }} />
+          <span style={{ fontFamily: "'Cinzel', serif", fontSize: '8px', letterSpacing: '0.14em', textTransform: 'uppercase', color: st?.color ?? 'var(--dust)' }}>
+            {st?.label ?? status}
+          </span>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div style={{ padding: '22px 24px' }}>
+        {/* KPI row */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '16px', marginBottom: '18px' }}>
+          {rows.map(r => (
+            <div key={r.lbl}>
+              <div style={{ fontFamily: "'Cinzel', serif", fontSize: '8px', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(240,237,232,0.3)', marginBottom: '4px' }}>{r.lbl}</div>
+              <div style={{ fontFamily: "'EB Garamond', serif", fontSize: '22px', fontWeight: 400, color: r.col }}>{r.val}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Firma 4 — divider 3px Amatista */}
+        <div style={{ height: '1px', background: 'rgba(92,52,114,0.2)', marginBottom: '16px' }} />
+
+        {/* Disclaimer CPA */}
+        <div style={{ fontFamily: "'EB Garamond', serif", fontSize: '13px', fontStyle: 'italic', color: 'rgba(240,237,232,0.28)', marginBottom: '16px', borderLeft: '2px solid rgba(92,52,114,0.25)', paddingLeft: '12px', lineHeight: 1.6 }}>
+          Estado preliminar · pendiente firma CPA Marlene Molina (PE-11-2157 · 0488-2020)
+        </div>
+
+        {/* Workflow button */}
+        {st?.next && nextSt && (
+          <button
+            onClick={onAdvance}
+            style={{ padding: '8px 18px', background: 'transparent', border: `1px solid ${st.color}`, borderRadius: '6px', color: st.color, fontFamily: "'Cinzel', serif", fontSize: '8px', fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', cursor: 'pointer', transition: 'background 0.15s' }}
+          >
+            Avanzar a: {nextSt.label}
+          </button>
+        )}
+        {!st?.next && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '7px', fontFamily: "'Cinzel', serif", fontSize: '8px', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--success, #4ADE80)' }}>
+            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--success, #4ADE80)', display: 'inline-block' }} />
+            EEFF oficial firmado
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
