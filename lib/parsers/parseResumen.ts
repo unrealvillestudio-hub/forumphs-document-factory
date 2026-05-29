@@ -11,11 +11,12 @@ const MONTH_MAP: Record<string, number> = {
 }
 
 function extractDate(text: string): string {
-  // Format: "lunes, 21 de abril de 2025"
-  const m1 = text.match(/(?:lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo),?\s*\d{1,2}\s+de\s+\w+\s+de\s+\d{4}/i)
+  // Format: "lunes, 21 de abril de 2025" — also convocatoria "jueves, 21 mayo de 2026"
+  // (the "de" before the month is optional).
+  const m1 = text.match(/(?:lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo),?\s*\d{1,2}\s+(?:de\s+)?\w+\s+de\s+\d{4}/i)
   if (m1) return m1[0]
-  // Format: "21 de abril de 2025" (no weekday)
-  const m2 = text.match(/\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de\s+\d{4}/i)
+  // Format: "21 de abril de 2025" / "21 mayo de 2026" (no weekday, optional "de")
+  const m2 = text.match(/\d{1,2}\s+(?:de\s+)?(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de\s+\d{4}/i)
   if (m2) return m2[0]
   // Format: "Fecha: 07 de abril de 2026" — Hypal resumen header
   const m2b = text.match(/[Ff]echa[:\s]+([\d]{1,2}\s+de\s+\w+\s+de\s+\d{4})/i)
@@ -30,7 +31,8 @@ function extractTime(text: string, type: 'start' | 'end'): string {
   if (type === 'start') {
     const m = text.match(/(?:inicio|inicia|siendo las?|a las?)(?:las?\s+)?(\d{1,2}:\d{2}\s*(?:am|pm|p\.m\.|a\.m\.)?)/i)
     if (m) return m[1].trim()
-    const m2 = text.match(/(\d{1,2}:\d{2}\s*(?:am|pm))/i)
+    // Convocatoria style "6:00 p.m." — accept am/pm with or without periods
+    const m2 = text.match(/(\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?))/i)
     if (m2) return m2[1].trim()
   } else {
     const m = text.match(/(?:siendo las?|terminó|finalizó|se da por terminad[ao]|damos por terminada).{0,30}?(\d{1,2}:\d{2}\s*(?:am|pm|p\.m\.)?)/i)
@@ -40,10 +42,31 @@ function extractTime(text: string, type: 'start' | 'end'): string {
 }
 
 function extractPHName(text: string): string {
-  // "PH VENEZIA TOWER", "P.H. LEFEVRE 75 DON ENRIQUE"
+  // Convocatoria / header style: "el PH LUXOR 300", "P.H. LEFEVRE 75 DON ENRIQUE",
+  // "PH VENEZIA TOWER". Capture consecutive ALL-CAPS / numeric tokens (name + tower/
+  // number); this stops at the first lowercase word so we don't swallow the sentence.
+  const caps = text.match(/\bP\.?H\.?\s+([A-ZÁÉÍÓÚÑ0-9]{2,}(?:\s+[A-ZÁÉÍÓÚÑ0-9]+){0,4})/)
+  if (caps) return `PH ${caps[1].trim().replace(/\s+/g, ' ').toUpperCase()}`
+  // General fallback for mixed-case names: "PH Nombre" up to a delimiter
   const m = text.match(/(?:P\.?H\.?\s+)([A-ZÁÉÍÓÚÑa-záéíóúñ][A-ZÁÉÍÓÚÑa-záéíóúñ0-9\s]+?)(?:\n|,|\.|\/|\(|del|de la)/i)
   if (m) return `PH ${m[1].trim().toUpperCase()}`
   return '[NOMBRE PH PENDIENTE]'
+}
+
+/**
+ * extractAssemblyType — BUG 5
+ * Convocatorias often contain the word "extraordinaria" in legal boilerplate even
+ * when the meeting itself is ordinary, which made a naive /extraordinaria/ test
+ * misclassify Luxor as EXTRAORDINARIA. Prefer an explicit "asamblea ordinaria"
+ * designation (incl. "PRIMERA ASAMBLEA ORDINARIA"); only flag EXTRAORDINARIA when
+ * "asamblea extraordinaria" is explicit. Default ORDINARIA — the vast majority are.
+ * Note: `asamblea\s+ordinaria` does NOT match "asamblea extraordinaria" (the "extra"
+ * prefix breaks the required whitespace boundary), so the order below is safe.
+ */
+function extractAssemblyType(text: string): 'ORDINARIA' | 'EXTRAORDINARIA' {
+  if (/(?:primera\s+)?asamblea\s+ordinaria/i.test(text)) return 'ORDINARIA'
+  if (/asamblea\s+extraordinaria/i.test(text)) return 'EXTRAORDINARIA'
+  return 'ORDINARIA'
 }
 
 /**
@@ -124,9 +147,6 @@ export function extractAgendaItems(text: string): AgendaItem[] {
 export function parseResumen(rawText: string): SkeletonData {
   const quorum = extractQuorum(rawText)
 
-  // Extract assembly type
-  const isExtraordinaria = /extraordinaria/i.test(rawText)
-
   // Extract acta number
   const actaM = rawText.match(/[Aa]cta\s*[Nn][oº°]?\.?\s*(\d+)[-–]?(\d{4})?/i)
   const actaNumber = actaM ? `${actaM[1]}${actaM[2] ? '-' + actaM[2] : ''}` : undefined
@@ -143,7 +163,7 @@ export function parseResumen(rawText: string): SkeletonData {
     ph_name:         extractPHName(rawText),
     ph_finca:        fincaM ? fincaM[1].trim().replace(/\s+/g, '') : undefined,
     ph_codigo:       codigoM ? codigoM[1].trim().replace(/\s+/g, '') : undefined,
-    assembly_type:   isExtraordinaria ? 'EXTRAORDINARIA' : 'ORDINARIA',
+    assembly_type:   extractAssemblyType(rawText),
     acta_number:     actaNumber,
     date_str:        extractDate(rawText),
     time_start:      extractTime(rawText, 'start'),

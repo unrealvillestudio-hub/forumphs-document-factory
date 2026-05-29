@@ -201,12 +201,33 @@ async function extractDocxImages(
 
 // ── XLSX row extraction ──────────────────────────────────────────────────────
 
-async function extractXlsxRows(arrayBuffer: ArrayBuffer): Promise<Record<string, string>[]> {
+async function extractXlsxRows(
+  arrayBuffer: ArrayBuffer,
+  allSheets = false
+): Promise<Record<string, string>[]> {
   try {
     const XLSX = await import('xlsx')
     const wb = XLSX.read(arrayBuffer, { type: 'array' })
-    const ws = wb.Sheets[wb.SheetNames[0]]
-    return XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: '', raw: false })
+
+    // Default: single sheet (asistencia, legacy single-question votaciones).
+    if (!allSheets) {
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      if (!ws) return []
+      return XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: '', raw: false })
+    }
+
+    // Multi-sheet (Luxor votaciones: one sheet per question). Each sheet's rows
+    // are prefixed with a sentinel row carrying the sheet name, so the downstream
+    // parser can split a single call into one record per sheet/question.
+    const out: Record<string, string>[] = []
+    for (const sheetName of wb.SheetNames) {
+      const ws = wb.Sheets[sheetName]
+      if (!ws) continue
+      out.push({ __SHEET_NAME: sheetName, __IS_SHEET_HEADER: 'true' })
+      const sheetRows = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: '', raw: false })
+      out.push(...sheetRows)
+    }
+    return out
   } catch {
     return []
   }
@@ -264,7 +285,7 @@ async function applyFallbacks(
   const votoXls = xlsx[1]
   if (result.votaciones_rows.length === 0 && votoXls) {
     onProgress?.(`Asignando votaciones: ${votoXls.name}`, 98)
-    result.votaciones_rows = await extractXlsxRows(votoXls.buf)
+    result.votaciones_rows = await extractXlsxRows(votoXls.buf, true)
     result.stats.votaciones_rows_count = result.votaciones_rows.length
   }
 }
@@ -342,7 +363,7 @@ export async function extractZip(file: File, onProgress?: ProgressCallback): Pro
     } else if (isVotaciones(name)) {
       onProgress?.(`Extrayendo votaciones: ${name}`, pct)
       const buf = await f.async('arraybuffer')
-      result.votaciones_rows = await extractXlsxRows(buf)
+      result.votaciones_rows = await extractXlsxRows(buf, true)
       result.stats.votaciones_rows_count = result.votaciones_rows.length
 
     } else if (isChat(name)) {
@@ -460,7 +481,7 @@ export async function extractLooseFiles(files: File[], onProgress?: ProgressCall
     } else if (isVotaciones(name)) {
       onProgress?.(`Extrayendo votaciones: ${name}`, pct)
       const buf = await f.arrayBuffer()
-      result.votaciones_rows = await extractXlsxRows(buf)
+      result.votaciones_rows = await extractXlsxRows(buf, true)
       result.stats.votaciones_rows_count = result.votaciones_rows.length
 
     } else if (isChat(name)) {

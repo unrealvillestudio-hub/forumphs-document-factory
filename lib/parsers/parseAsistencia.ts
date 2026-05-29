@@ -16,9 +16,10 @@ export function parseAsistencia(rows: Record<string, unknown>[]): AttendanceReco
   const records: AttendanceRecord[] = []
 
   for (const row of rows) {
-    // Hypal format: Unidad, Participante
+    // Unit code. Hypal: 'Unidad'. Luxor: 'Número' (e.g. 'T3 07D').
     const unit =
       String(row['Unidad'] || row['UNIDAD'] || row['unidad'] ||
+             row['Número'] || row['NUMERO'] || row['Numero'] ||
              row['Apartamento'] || row['Unit'] || row['APARTAMENTO'] || '').trim()
 
     const owner =
@@ -26,18 +27,29 @@ export function parseAsistencia(rows: Record<string, unknown>[]): AttendanceReco
              row['Propietario'] || row['PROPIETARIO'] ||
              row['Nombre'] || row['NOMBRE'] || row['Owner'] || '').trim()
 
-    const rep =
+    let rep =
       String(row['Representado por'] || row['REPRESENTADO POR'] ||
-             row['Representante'] || row['Representative'] || '').trim()
+             row['Representante'] || row['REPRESENTANTE'] ||
+             row['Apoderado'] || row['APODERADO'] ||
+             row['Representative'] || '').trim()
 
     // Skip header-like rows and empty rows
     if (!unit || !owner) continue
     if (unit.toLowerCase() === 'unidad' || owner.toLowerCase() === 'participante') continue
     if (unit.toLowerCase() === 'apartamento') continue
 
-    // Only include present attendees (Hypal marks as "Presente")
-    const asistencia = String(row['Asistencia'] || row['ASISTENCIA'] || 'Presente').trim()
+    // Attendance status. Hypal: 'Asistencia' ("Presente"). Luxor: 'Estado'
+    // (ASISTIÓ / REPRESENTADO / AUSENTE). Only absent attendees are excluded.
+    const asistencia =
+      String(row['Asistencia'] || row['ASISTENCIA'] ||
+             row['Estado'] || row['ESTADO'] ||
+             'Presente').trim()
     if (asistencia && asistencia.toLowerCase() === 'ausente') continue
+
+    // 'REPRESENTADO' with no representative name found → mark as represented
+    if (asistencia.toLowerCase() === 'representado' && !rep) {
+      rep = 'Representado'
+    }
 
     records.push({
       unit,
@@ -54,29 +66,73 @@ export function parseVotaciones(rows: Record<string, unknown>[]): VotationRecord
 
   const records: VotationRecord[] = []
 
-  // The question is encoded in the first column's key name
-  // e.g. "Pregunta:¿Aprueba la asamblea el orden del dia propuesto para esta reunión?"
-  const firstKey = Object.keys(rows[0] || {})[0] || ''
-  const questionMatch = firstKey.match(/Pregunta[:\s]*(.+)/i)
-  const topic = questionMatch ? questionMatch[1].trim() : firstKey.trim()
-
-  if (!topic) return []
-
-  // Count votes from individual rows
+  // Per-question (per-sheet) accumulator. BUG 1 prefixes each sheet's rows with a
+  // sentinel { __SHEET_NAME, __IS_SHEET_HEADER }, so one call may carry several
+  // questions (Luxor: one sheet each). Legacy single-sheet votaciones arrive with
+  // no sentinel and the question encoded in the first column's key name.
+  let topic = ''
+  let firstKey = ''
   let yesCount = 0
   let noCount = 0
   let summaryYes: number | null = null
   let summaryNo: number | null = null
   let summaryPct: number | null = null
 
+  const startBlock = (sheetTopic: string) => {
+    topic = sheetTopic
+    firstKey = ''
+    yesCount = 0
+    noCount = 0
+    summaryYes = null
+    summaryNo = null
+    summaryPct = null
+  }
+
+  const flushBlock = () => {
+    if (!topic) return
+    // Prefer summary counts (more reliable) over the individual tally
+    const finalYes = summaryYes !== null ? summaryYes : yesCount
+    const finalNo = summaryNo !== null ? summaryNo : noCount
+    const finalPct = summaryPct !== null
+      ? summaryPct
+      : (finalYes + finalNo > 0 ? Math.round((finalYes / (finalYes + finalNo)) * 10000) / 100 : 0)
+    records.push({
+      topic,
+      yes_votes: finalYes,
+      no_votes: finalNo,
+      pct_yes: finalPct,
+      approved: finalYes > finalNo,
+    })
+  }
+
   for (const row of rows) {
+    // ── Sheet boundary sentinel (BUG 1 multi-sheet) ──────────────────────────
+    // Close the question accumulated so far and open a new one named after the sheet.
+    if (String(row['__IS_SHEET_HEADER'] || '') === 'true') {
+      flushBlock()
+      startBlock(String(row['__SHEET_NAME'] || '').trim())
+      continue
+    }
+
+    // First data column key of the block. Legacy Hypal encodes the question here
+    // ("Pregunta:¿…?"); when present it overrides the sheet-name topic.
+    if (!firstKey) {
+      firstKey = Object.keys(row).find(k => k !== '__SHEET_NAME' && k !== '__IS_SHEET_HEADER') || ''
+      const questionMatch = firstKey.match(/Pregunta[:\s]*(.+)/i)
+      if (questionMatch) topic = questionMatch[1].trim()
+      else if (!topic) topic = firstKey.trim()
+    }
+
     const apt = String(row[firstKey] || '').trim()
-    const voto = String(row['__EMPTY'] || '').trim().toLowerCase()
+    // BUG 2: Luxor stores the vote in 'Resultado'; legacy uses '__EMPTY'
+    const voto = String(
+      row['Resultado'] || row['__EMPTY'] || row['Voto'] || row['RESULTADO'] || ''
+    ).trim().toLowerCase()
     const summaryLabel = String(row['__EMPTY_2'] || '').trim().toLowerCase()
     const summaryCount = row['__EMPTY_3']
     const summaryPctVal = row['__EMPTY_4']
 
-    // Skip header rows
+    // Skip header rows / rows whose unit column is blank
     if (apt.toLowerCase() === 'apartamento' || apt === '') continue
 
     // Extract summary totals (rows with __EMPTY_2 = Si/No and a count)
@@ -101,18 +157,8 @@ export function parseVotaciones(rows: Record<string, unknown>[]): VotationRecord
     }
   }
 
-  // Prefer summary counts (more reliable) over individual count
-  const finalYes = summaryYes !== null ? summaryYes : yesCount
-  const finalNo = summaryNo !== null ? summaryNo : noCount
-  const finalPct = summaryPct !== null ? summaryPct : (finalYes + finalNo > 0 ? Math.round((finalYes / (finalYes + finalNo)) * 10000) / 100 : 0)
-
-  records.push({
-    topic,
-    yes_votes: finalYes,
-    no_votes: finalNo,
-    pct_yes: finalPct,
-    approved: finalYes > finalNo,
-  })
+  // Flush the final (or only) question
+  flushBlock()
 
   return records
 }
