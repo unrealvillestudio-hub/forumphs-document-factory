@@ -57,6 +57,7 @@ function isTranscripcion(name: string): boolean {
     n.includes('transcript') ||
     n.includes('grabaci') ||
     n.includes('recording') ||
+    n.includes('acta') ||
     n.endsWith('.vtt')
   )
 }
@@ -91,6 +92,16 @@ function isChat(name: string): boolean {
 function isStandaloneImage(name: string): boolean {
   const n = name.toLowerCase()
   return n.endsWith('.png') || n.endsWith('.jpg') || n.endsWith('.jpeg')
+}
+
+function isDocx(name: string): boolean {
+  const n = name.toLowerCase()
+  return n.endsWith('.docx') || n.endsWith('.doc')
+}
+
+function isSpreadsheet(name: string): boolean {
+  const n = name.toLowerCase()
+  return n.endsWith('.xlsx') || n.endsWith('.xls')
 }
 
 // ── Image type detection ──────────────────────────────────────────────────
@@ -205,6 +216,59 @@ async function extractXlsxRows(arrayBuffer: ArrayBuffer): Promise<Record<string,
 
 export type ProgressCallback = (step: string, pct: number) => void
 
+// ── Fallback matching for ZIPs/loose files of any origin ─────────────────────────
+// When filenames don't match the Hypal patterns, assign unmatched .docx/.xlsx by
+// size so the acta still gets a transcripción, resumen, asistencia and votaciones.
+
+interface UnmatchedEntry {
+  name: string
+  buf: ArrayBuffer
+}
+
+async function applyFallbacks(
+  result: ExtractedData,
+  unmatchedDocx: UnmatchedEntry[],
+  unmatchedXlsx: UnmatchedEntry[],
+  onProgress?: ProgressCallback
+): Promise<void> {
+  const docx = [...unmatchedDocx].sort((a, b) => b.buf.byteLength - a.buf.byteLength)
+  const xlsx = [...unmatchedXlsx].sort((a, b) => b.buf.byteLength - a.buf.byteLength)
+
+  // Transcripción ← largest unmatched .docx
+  const transcDoc = docx[0]
+  if (!result.transcripcion && transcDoc) {
+    onProgress?.(`Asignando transcripción: ${transcDoc.name}`, 92)
+    result.transcripcion = await extractDocxText(transcDoc.buf)
+    result.images.push(...(await extractDocxImages(transcDoc.buf, 'transcripcion')))
+    result.stats.transcripcion_found = result.transcripcion.length > 100
+  }
+
+  // Resumen ← second-largest unmatched .docx
+  const resumenDoc = docx[1]
+  if (!result.resumen && resumenDoc) {
+    onProgress?.(`Asignando resumen: ${resumenDoc.name}`, 94)
+    result.resumen = await extractDocxText(resumenDoc.buf)
+    result.images.push(...(await extractDocxImages(resumenDoc.buf, 'resumen')))
+    result.stats.resumen_found = result.resumen.length > 50
+  }
+
+  // Asistencia ← first unmatched .xlsx
+  const asisXls = xlsx[0]
+  if (result.asistencia_rows.length === 0 && asisXls) {
+    onProgress?.(`Asignando asistencia: ${asisXls.name}`, 96)
+    result.asistencia_rows = await extractXlsxRows(asisXls.buf)
+    result.stats.asistencia_rows_count = result.asistencia_rows.length
+  }
+
+  // Votaciones ← second unmatched .xlsx
+  const votoXls = xlsx[1]
+  if (result.votaciones_rows.length === 0 && votoXls) {
+    onProgress?.(`Asignando votaciones: ${votoXls.name}`, 98)
+    result.votaciones_rows = await extractXlsxRows(votoXls.buf)
+    result.stats.votaciones_rows_count = result.votaciones_rows.length
+  }
+}
+
 // ── Main export ────────────────────────────────────────────────────────────────
 
 export async function extractZip(file: File, onProgress?: ProgressCallback): Promise<ExtractedData> {
@@ -231,6 +295,9 @@ export async function extractZip(file: File, onProgress?: ProgressCallback): Pro
       files_detected: [],
     },
   }
+
+  const unmatchedDocx: UnmatchedEntry[] = []
+  const unmatchedXlsx: UnmatchedEntry[] = []
 
   const files = Object.values(zip.files).filter(f => !f.dir)
   const total = files.length
@@ -298,8 +365,138 @@ export async function extractZip(file: File, onProgress?: ProgressCallback): Pro
         type: mimeFromName(name),
         source: 'standalone',
       })
+
+    } else if (isDocx(name)) {
+      onProgress?.(`Leyendo archivo: ${name}`, pct)
+      const buf = await f.async('arraybuffer')
+      unmatchedDocx.push({ name, buf })
+
+    } else if (isSpreadsheet(name)) {
+      onProgress?.(`Leyendo archivo: ${name}`, pct)
+      const buf = await f.async('arraybuffer')
+      unmatchedXlsx.push({ name, buf })
     }
   }
+
+  // Smart fallback for ZIPs whose filenames don't match the Hypal patterns
+  await applyFallbacks(result, unmatchedDocx, unmatchedXlsx, onProgress)
+
+  // Deduplicate images by filename+size (same image embedded in multiple docs)
+  const seen = new Set<string>()
+  result.images = result.images.filter(img => {
+    const key = `${img.filename}_${img.data.length}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+
+  result.stats.images_count = result.images.length
+  onProgress?.(`Extracción completada ✓ (${result.images.length} imágenes)`, 100)
+  return result
+}
+
+// ── Loose files export ───────────────────────────────────────────────────────
+// Same logic as extractZip but for individual File objects (no JSZip wrapper),
+// e.g. files attached to a Gmail thread and dragged in directly.
+
+export async function extractLooseFiles(files: File[], onProgress?: ProgressCallback): Promise<ExtractedData> {
+  onProgress?.('Leyendo archivos…', 5)
+
+  const result: ExtractedData = {
+    resumen: '',
+    transcripcion: '',
+    asistencia_rows: [],
+    votaciones_rows: [],
+    chats: '',
+    images: [],
+    stats: {
+      resumen_found: false,
+      transcripcion_found: false,
+      asistencia_rows_count: 0,
+      votaciones_rows_count: 0,
+      images_count: 0,
+      chat_found: false,
+      files_detected: [],
+    },
+  }
+
+  const unmatchedDocx: UnmatchedEntry[] = []
+  const unmatchedXlsx: UnmatchedEntry[] = []
+
+  const total = files.length
+  result.stats.files_detected = files.map(f => f.name)
+
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i]
+    const name = f.name
+    const lower = name.toLowerCase()
+    const pct = Math.round(10 + (i / total) * 80)
+
+    if (isResumen(name)) {
+      onProgress?.(`Extrayendo resumen: ${name}`, pct)
+      const buf = await f.arrayBuffer()
+      result.resumen = await extractDocxText(buf)
+      result.stats.resumen_found = result.resumen.length > 50
+      onProgress?.(`Extrayendo imágenes del resumen…`, pct)
+      result.images.push(...(await extractDocxImages(buf, 'resumen')))
+
+    } else if (isTranscripcion(name)) {
+      onProgress?.(`Extrayendo transcripción: ${name}`, pct)
+      if (lower.endsWith('.vtt') || lower.endsWith('.txt')) {
+        result.transcripcion = await f.text()
+      } else {
+        const buf = await f.arrayBuffer()
+        result.transcripcion = await extractDocxText(buf)
+        result.images.push(...(await extractDocxImages(buf, 'transcripcion')))
+      }
+      result.stats.transcripcion_found = result.transcripcion.length > 100
+
+    } else if (isAsistencia(name)) {
+      onProgress?.(`Extrayendo asistencia: ${name}`, pct)
+      const buf = await f.arrayBuffer()
+      result.asistencia_rows = await extractXlsxRows(buf)
+      result.stats.asistencia_rows_count = result.asistencia_rows.length
+
+    } else if (isVotaciones(name)) {
+      onProgress?.(`Extrayendo votaciones: ${name}`, pct)
+      const buf = await f.arrayBuffer()
+      result.votaciones_rows = await extractXlsxRows(buf)
+      result.stats.votaciones_rows_count = result.votaciones_rows.length
+
+    } else if (isChat(name)) {
+      onProgress?.(`Extrayendo chat: ${name}`, pct)
+      if (lower.endsWith('.txt')) {
+        result.chats = await f.text()
+      } else {
+        const buf = await f.arrayBuffer()
+        result.chats = await extractDocxText(buf)
+      }
+      result.stats.chat_found = result.chats.length > 10
+
+    } else if (isStandaloneImage(name)) {
+      onProgress?.(`Extrayendo imagen: ${name}`, pct)
+      const buf = await f.arrayBuffer()
+      result.images.push({
+        filename: name,
+        data: arrayBufferToBase64(buf),
+        type: mimeFromName(name),
+        source: 'standalone',
+      })
+
+    } else if (isDocx(name)) {
+      onProgress?.(`Leyendo archivo: ${name}`, pct)
+      const buf = await f.arrayBuffer()
+      unmatchedDocx.push({ name, buf })
+
+    } else if (isSpreadsheet(name)) {
+      onProgress?.(`Leyendo archivo: ${name}`, pct)
+      const buf = await f.arrayBuffer()
+      unmatchedXlsx.push({ name, buf })
+    }
+  }
+
+  // Smart fallback for loose files whose names don't match the Hypal patterns
+  await applyFallbacks(result, unmatchedDocx, unmatchedXlsx, onProgress)
 
   // Deduplicate images by filename+size (same image embedded in multiple docs)
   const seen = new Set<string>()

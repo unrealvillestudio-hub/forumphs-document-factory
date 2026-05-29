@@ -1,8 +1,10 @@
 'use client'
 
 import { useCallback, useState } from 'react'
-import { extractZip } from '@/lib/zipExtractor'
+import { extractZip, extractLooseFiles } from '@/lib/zipExtractor'
 import type { ExtractedData } from '@/lib/zipExtractor'
+
+const ACCEPTED = '.zip,.docx,.doc,.xlsx,.xls,.vtt,.txt,.png,.jpg,.jpeg'
 
 interface UploadZoneProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -28,15 +30,18 @@ export default function UploadZone({ onDataReady, loading }: UploadZoneProps) {
   const [extracted, setExtracted]             = useState<ExtractedData | null>(null)
   const [error, setError]                     = useState('')
 
-  const handleFile = useCallback(async (file: File) => {
-    if (!file.name.toLowerCase().endsWith('.zip')) { setError('Sube el archivo .zip de Hypal'); return }
+  const handleFiles = useCallback(async (files: File[]) => {
     setError(''); setExtracted(null); setStats(null)
     setExtracting(true); setProgress({ step: 'Iniciando extracción…', pct: 0 })
 
     try {
-      const data = await extractZip(file, (step, pct) => setProgress({ step, pct }))
+      const onProgress = (step: string, pct: number) => setProgress({ step, pct })
+      const isSingleZip = files.length === 1 && files[0].name.toLowerCase().endsWith('.zip')
+      const data = isSingleZip
+        ? await extractZip(files[0], onProgress)
+        : await extractLooseFiles(files, onProgress)
       setStats({
-        name: file.name,
+        name: files.length === 1 ? files[0].name : `${files.length} archivos`,
         transcripcion: data.stats.transcripcion_found,
         resumen: data.stats.resumen_found,
         asistentes: data.stats.asistencia_rows_count,
@@ -46,7 +51,7 @@ export default function UploadZone({ onDataReady, loading }: UploadZoneProps) {
       })
       setExtracted(data)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al extraer el ZIP')
+      setError(err instanceof Error ? err.message : 'Error al procesar los archivos')
     } finally {
       setExtracting(false); setProgress(null)
     }
@@ -62,11 +67,12 @@ export default function UploadZone({ onDataReady, loading }: UploadZoneProps) {
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault(); setDragging(false)
-    const file = e.dataTransfer.files[0]; if (file) handleFile(file)
-  }, [handleFile])
+    const files = Array.from(e.dataTransfer.files); if (files.length) handleFiles(files)
+  }, [handleFiles])
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]; if (file) handleFile(file)
+    const files = Array.from(e.target.files || []); if (files.length) handleFiles(files)
+    e.target.value = ''
   }
 
   const isDisabled = loading || extracting
@@ -161,7 +167,7 @@ export default function UploadZone({ onDataReady, loading }: UploadZoneProps) {
             onDrop={handleDrop}
             style={{ display: 'block', border: `2px dashed ${dragging ? 'var(--amatista)' : error ? 'rgba(196,98,45,0.4)' : 'rgba(92,52,114,0.35)'}`, borderRadius: 16, padding: extracting ? '36px 32px' : '48px 32px', textAlign: 'center', cursor: isDisabled ? 'not-allowed' : 'pointer', background: dragging ? 'rgba(92,52,114,0.07)' : 'rgba(28,34,51,0.5)', transition: 'all 0.2s ease', backdropFilter: 'blur(8px)' }}
           >
-            <input type="file" accept=".zip" className="hidden" onChange={handleChange} disabled={isDisabled} />
+            <input type="file" accept={ACCEPTED} multiple className="hidden" onChange={handleChange} disabled={isDisabled} />
 
             {extracting && progress ? (
               <div style={{ maxWidth: 400, margin: '0 auto' }}>
@@ -183,9 +189,13 @@ export default function UploadZone({ onDataReady, loading }: UploadZoneProps) {
             ) : (
               <div>
                 <div style={{ width: 56, height: 56, background: 'rgba(92,52,114,0.12)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 18px', fontSize: 24 }}>📦</div>
-                <p style={{ color: 'var(--parch)', fontWeight: 500, margin: '0 0 6px', fontSize: 16 }}>Arrastra el ZIP de Hypal aquí</p>
-                <p style={{ color: 'var(--parch-dim)', fontSize: 13, margin: '0 0 4px' }}>Extracción local · El ZIP nunca sale de tu máquina</p>
-                <p style={{ color: 'rgba(200,196,190,0.3)', fontSize: 11, margin: 0, letterSpacing: '0.05em' }}>HYPAL_[PH]_[FECHA].zip</p>
+                <p style={{ color: 'var(--parch)', fontWeight: 500, margin: '0 0 6px', fontSize: 16 }}>Arrastra el ZIP o archivos sueltos aquí</p>
+                <p style={{ color: 'var(--parch-dim)', fontSize: 13, margin: '0 0 12px' }}>ZIP de Hypal · ZIP de Gmail · archivos .docx / .xlsx sueltos</p>
+                <div style={{ display: 'flex', justifyContent: 'center', gap: 6, flexWrap: 'wrap' as const }}>
+                  {['.zip', '.docx', '.xlsx', '.vtt', '.txt'].map(ext => (
+                    <span key={ext} style={{ fontSize: 10, letterSpacing: '0.05em', color: 'rgba(200,196,190,0.4)', padding: '2px 8px', border: '1px solid rgba(200,196,190,0.12)', borderRadius: 12 }}>{ext}</span>
+                  ))}
+                </div>
               </div>
             )}
           </label>
@@ -194,7 +204,7 @@ export default function UploadZone({ onDataReady, loading }: UploadZoneProps) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginTop: 20 }}>
             {[
               { icon: '🔒', label: 'ZIP local', desc: 'Extracción en tu máquina. El ZIP nunca sale de tu PC.' },
-              { icon: '⚡', label: 'Paso 0.5 activo', desc: 'Claude formaliza cada intervención en 3ª persona legal.' },
+              { icon: '📎', label: 'Cualquier origen', desc: 'ZIP de Hypal, ZIP de Gmail, archivos sueltos.' },
               { icon: '🖼️', label: 'Imágenes incluidas', desc: 'Capturas de votaciones se incluyen en el acta.' },
             ].map(card => (
               <div key={card.label} style={{ background: 'rgba(28,34,51,0.7)', border: '1px solid rgba(92,52,114,0.18)', borderRadius: 10, padding: '14px 16px' }}>
