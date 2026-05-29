@@ -1382,6 +1382,90 @@ footer,
 }
 
 
+/* ═══════════════════════════════════════════════════════════════
+   SECCIÓN 13 — DOCUMENT FACTORY · component compat layer
+   Aliases for the upload→preflight→formalize→QA→ICR flow components,
+   which were authored against the previous token naming. Additive only.
+   ═══════════════════════════════════════════════════════════════ */
+:root {
+  --parch-dim:      rgba(240,237,232,0.55);
+  --amatista:       var(--am);
+  --amatista-light: var(--am-l);
+  --carbon-light:   #232a3d;
+  --carbon-mid:     #2c3447;
+}
+
+.fade-in { animation: fade-in var(--duration-mid) var(--ease-out) forwards; }
+
+.df-label {
+  font-family: var(--font-label);
+  font-size: var(--text-xs);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--dust);
+  display: block;
+  margin-bottom: 0.375rem;
+}
+
+.df-input {
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  color: var(--parch);
+  background: var(--carbon);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: var(--radius-sm);
+  padding: 0.625rem 0.875rem;
+  outline: none;
+  width: 100%;
+}
+.df-input::placeholder { color: var(--text-subtle); }
+.df-input:focus { border-color: var(--am); background: rgba(28,34,51,0.8); }
+
+.df-btn-primary {
+  font-family: var(--font-ui);
+  font-weight: 700;
+  background: var(--am);
+  color: var(--parch);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1.5rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: filter var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+}
+.df-btn-primary:hover:not(:disabled) { filter: brightness(1.12); transform: translateY(-1px); }
+.df-btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.df-btn-ghost {
+  font-family: var(--font-ui);
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1.25rem;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.df-btn-ghost:hover:not(:disabled) { border-color: var(--am); color: var(--am-l); }
+
+.wc-bar { height: 6px; background: rgba(92,52,114,0.15); border-radius: 3px; overflow: hidden; width: 100%; }
+.wc-bar-fill { height: 100%; background: var(--terra); border-radius: 3px; transition: width 0.4s var(--ease-out); }
+.wc-bar-fill.ok { background: var(--success); }
+
+@keyframes spin-slow { to { transform: rotate(360deg); } }
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0 rgba(92,52,114,0.5); }
+  70%  { box-shadow: 0 0 0 6px rgba(92,52,114,0); }
+  100% { box-shadow: 0 0 0 0 rgba(92,52,114,0); }
+}
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+
 /* ══════════════════════════════════════════════════════════
    FIN — globals.css · ForumPHs · Visual Genome Amatista Carbon
    ui-ux-layer v3.0 · Unreal>ille Studio · 2026-05-22
