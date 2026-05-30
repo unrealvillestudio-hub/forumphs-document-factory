@@ -101,6 +101,9 @@ export default function DocumentFactoryPage() {
     confirmed_present_units: asNum(answers.confirmed_present_units),
     confirmed_time_end:      asText(answers.confirmed_time_end),
     confirmed_agenda_items:  asText(answers.confirmed_agenda_items),
+    confirmed_total_units:   asNum(answers.confirmed_total_units),
+    confirmed_date_str:      asText(answers.confirmed_date_str),
+    confirmed_time_start:    asText(answers.confirmed_time_start),
   })
 
   const handlePreflight = (

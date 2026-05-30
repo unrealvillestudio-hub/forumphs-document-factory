@@ -84,8 +84,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     const finca        = preflight.finca || s.ph_finca || '[FINCA PENDIENTE]'
     const codigo       = preflight.codigo || s.ph_codigo || '[CÓDIGO PENDIENTE]'
     const presentUnits = preflight.confirmed_present_units ?? s.present_units ?? parsed.attendance.length
-    const totalUnits   = s.total_units || 0
+    const totalUnits   = preflight.confirmed_total_units ?? s.total_units ?? 0
     const timeEnd      = preflight.confirmed_time_end || s.time_end || '[HORA FIN]'
+    const dateStr      = preflight.confirmed_date_str   || s.date_str   || '[FECHA PENDIENTE]'
+    const timeStart    = preflight.confirmed_time_start || s.time_start || '[HORA INICIO PENDIENTE]'
     const assignedBlocks       = assignBlocksToSections(formalizedBlocks, s.agenda_items)
     const hasFirstCallNoQuorum = detectFirstCallNoQuorum(parsed.raw_files['transcripcion'] || '')
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -149,7 +151,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       alignment: AlignmentType.CENTER, spacing: { after: 160 },
     }))
     docChildren.push(new Paragraph({
-      children: [new TextRun({ text: s.date_str, bold: true, size: 24, font: TNR })],
+      children: [new TextRun({ text: dateStr, bold: true, size: 24, font: TNR })],
       alignment: AlignmentType.CENTER, spacing: { after: 360 },
     }))
     // ── INTRO ─────────────────────────────────────────────────────────────────
@@ -162,7 +164,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       if (banner) docChildren.push(banner)
     }
     docChildren.push(normal(
-      `En la ciudad de Panamá, siendo las ${s.time_start} del ${s.date_str}, ` +
+      `En la ciudad de Panamá, siendo las ${timeStart} del ${dateStr}, ` +
       `se reunieron previa convocatoria los copropietarios del ${phName}, debidamente inscrito ` +
       `bajo la Finca número ${finca}, Código de ubicación ${codigo}, Sección de ` +
       `Propiedad Horizontal del Registro Público, conforme a la Ley No. 284 de 14 de febrero ` +
@@ -183,7 +185,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     const minQuorum = Math.floor(totalUnits / 2) + 1
     if (hasFirstCallNoQuorum) {
       docChildren.push(normal(
-        `Siendo las ${s.time_start}, se realizó el primer llamado para dar inicio a la Asamblea, ` +
+        `Siendo las ${timeStart}, se realizó el primer llamado para dar inicio a la Asamblea, ` +
         `verificándose que no se contaba con el quórum requerido de ${minQuorum} unidades. ` +
         `En consecuencia, conforme al artículo 67 de la Ley 284 de 2022, se procedió a realizar un segundo llamado.`
       ))
@@ -301,7 +303,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     }
     // ── CLOSING ───────────────────────────────────────────────────────────────
     docChildren.push(normal(
-      `Siendo, el ${s.date_str} a las ${timeEnd}, damos por terminada la sesión de la ` +
+      `Siendo, el ${dateStr} a las ${timeEnd}, damos por terminada la sesión de la ` +
       `${typeLabel} de Propietarios.`
     ))
     docChildren.push(emptyLine())

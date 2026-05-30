@@ -77,26 +77,36 @@ export function detectPreflightGaps(parsed: ParsedHypalZip): PreflightGap[] {
     value: parsed.attendance.length,
   })
 
-  // 5a. Total units — CRITICAL FIX: default = 0, NOT attendance count
-  // If we default to attendance.length, Ivette confirms 206 as "total" when it's just "present".
-  // Leaving it blank forces her to enter the real PH total (e.g. 274).
+  // 5a. Total units — override when parseResumen couldn't extract it (e.g. the source
+  // is a convocatoria). No default value: leaving it blank forces the real PH total to
+  // be entered (a default of 0 or attendance.length would re-introduce the 206/206 bug).
   if (!s.total_units || s.total_units === 0) {
     gaps.push({
-      field: 'total_units',
-      label: 'Total de unidades del PH ← REQUERIDO',
+      field: 'confirmed_total_units',
+      label: 'Total de unidades del PH',
       description: 'Número TOTAL de unidades inmobiliarias que conforman el PH (ej: 274). Este número NO es el de asistentes.',
       required: true,
       type: 'number',
-      value: 0,   // ← NUNCA usar attendance.length como default — causa el bug 206/206
     })
   }
 
-  // 5b. Date (if not found)
+  // 5b. Date — override when not found in the source (e.g. a convocatoria)
   if (!s.date_str || s.date_str.includes('PENDIENTE') || s.date_str.includes('NO ENCONTRADA')) {
     gaps.push({
-      field: 'confirmed_date',
+      field: 'confirmed_date_str',
       label: 'Fecha de la Asamblea',
       description: 'Fecha en que se celebró la asamblea (ej: lunes, 21 de abril de 2025)',
+      required: true,
+      type: 'text',
+    })
+  }
+
+  // 5c. Start time — override when not found in the source
+  if (!s.time_start || s.time_start.includes('PENDIENTE') || s.time_start.includes('NO ENCONTRADA')) {
+    gaps.push({
+      field: 'confirmed_time_start',
+      label: 'Hora de inicio de la Asamblea',
+      description: 'Hora exacta en que se dio inicio a la sesión (ej: 6:00 p.m.)',
       required: true,
       type: 'text',
     })
@@ -164,8 +174,14 @@ export function applyPreflightAnswers(
   if (answers.confirmed_time_end) {
     updated.skeleton.time_end = String(answers.confirmed_time_end)
   }
-  if (answers.total_units) {
-    updated.skeleton.total_units = Number(answers.total_units)
+  if (answers.confirmed_total_units) {
+    updated.skeleton.total_units = Number(answers.confirmed_total_units)
+  }
+  if (answers.confirmed_date_str) {
+    updated.skeleton.date_str = String(answers.confirmed_date_str)
+  }
+  if (answers.confirmed_time_start) {
+    updated.skeleton.time_start = String(answers.confirmed_time_start)
   }
   if (answers.president_name) {
     updated.skeleton.president_name = String(answers.president_name)

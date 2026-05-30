@@ -90,6 +90,11 @@ export interface PreflightData {
   confirmed_present_units?: number
   confirmed_time_end?: string
   confirmed_agenda_items?: string        // "1. Item\n2. Item\n..." — FPH-014
+  // Manual overrides for metadata parseResumen can't always extract from a
+  // convocatoria source (otherwise total_units stays 0 / date & time placeholders).
+  confirmed_total_units?: number
+  confirmed_date_str?: string
+  confirmed_time_start?: string
 }
 
 export interface PreflightGap {
