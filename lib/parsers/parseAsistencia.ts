@@ -61,105 +61,122 @@ export function parseAsistencia(rows: Record<string, unknown>[]): AttendanceReco
   return records
 }
 
-export function parseVotaciones(rows: Record<string, unknown>[]): VotationRecord[] {
-  if (!rows || rows.length === 0) return []
+// ── Vote-value classification ───────────────────────────────────────────────
+// Robust to wording variations across Hypal exports (Sí/No, A favor/En contra,
+// Aprobado/Rechazado, abstención…). Vote cells are short labels, never sentences.
+function classifyVote(raw: unknown): 'yes' | 'no' | 'abstain' | null {
+  const v = String(raw ?? '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/[.,;:]+$/, '').trim()
+  if (!v || v.length > 25) return null
+  if (/^(s[íi]|s[íi] apruebo|a favor|afavor|favor|aprobad[oa]|apruebo|aprueba|afirmativ[oa]|de acuerdo)$/.test(v)) return 'yes'
+  if (/^(no|no apruebo|en contra|contra|rechazad[oa]|negativ[oa]|desaprob[a-z]*)$/.test(v)) return 'no'
+  if (/^(abstenci[oó]n|abstencion|abstenid[oa]|abstien[a-z]*|en blanco|blanco|nul[oa])$/.test(v)) return 'abstain'
+  return null
+}
 
-  const records: VotationRecord[] = []
+interface VoteBlock { topic: string; rows: Record<string, unknown>[] }
 
-  // Per-question (per-sheet) accumulator. BUG 1 prefixes each sheet's rows with a
-  // sentinel { __SHEET_NAME, __IS_SHEET_HEADER }, so one call may carry several
-  // questions (Luxor: one sheet each). Legacy single-sheet votaciones arrive with
-  // no sentinel and the question encoded in the first column's key name.
-  let topic = ''
-  let firstKey = ''
-  let yesCount = 0
-  let noCount = 0
+function tallyBlock(sheetTopic: string, rows: Record<string, unknown>[]): VotationRecord | null {
+  if (rows.length === 0) return null
+
+  // ── Topic ──────────────────────────────────────────────────────────────────
+  // Legacy Hypal encodes the question in the first column's key ("Pregunta:¿…?").
+  // Offset-header sheets put the question directly in that key. Otherwise fall back
+  // to the sheet name supplied by the multi-sheet sentinel.
+  const keys = Object.keys(rows[0]).filter(k => k !== '__SHEET_NAME' && k !== '__IS_SHEET_HEADER')
+  const firstKey = keys[0] || ''
+  const qMatch = firstKey.match(/Pregunta[:\s]*(.+)/i)
+  let topic = qMatch ? qMatch[1].trim() : ''
+  if (!topic && (/[¿?]/.test(firstKey) || firstKey.trim().split(/\s+/).length >= 4)) topic = firstKey.trim()
+  if (!topic) topic = (sheetTopic || firstKey).trim()
+  if (!topic) return null
+
+  // ── Legacy summary rows: __EMPTY_2 = Si/No, __EMPTY_3 = count, __EMPTY_4 = pct ──
   let summaryYes: number | null = null
   let summaryNo: number | null = null
   let summaryPct: number | null = null
-
-  const startBlock = (sheetTopic: string) => {
-    topic = sheetTopic
-    firstKey = ''
-    yesCount = 0
-    noCount = 0
-    summaryYes = null
-    summaryNo = null
-    summaryPct = null
-  }
-
-  const flushBlock = () => {
-    if (!topic) return
-    // Prefer summary counts (more reliable) over the individual tally
-    const finalYes = summaryYes !== null ? summaryYes : yesCount
-    const finalNo = summaryNo !== null ? summaryNo : noCount
-    const finalPct = summaryPct !== null
-      ? summaryPct
-      : (finalYes + finalNo > 0 ? Math.round((finalYes / (finalYes + finalNo)) * 10000) / 100 : 0)
-    records.push({
-      topic,
-      yes_votes: finalYes,
-      no_votes: finalNo,
-      pct_yes: finalPct,
-      approved: finalYes > finalNo,
-    })
-  }
-
   for (const row of rows) {
-    // ── Sheet boundary sentinel (BUG 1 multi-sheet) ──────────────────────────
-    // Close the question accumulated so far and open a new one named after the sheet.
-    if (String(row['__IS_SHEET_HEADER'] || '') === 'true') {
-      flushBlock()
-      startBlock(String(row['__SHEET_NAME'] || '').trim())
-      continue
-    }
-
-    // First data column key of the block. Legacy Hypal encodes the question here
-    // ("Pregunta:¿…?"); when present it overrides the sheet-name topic.
-    if (!firstKey) {
-      firstKey = Object.keys(row).find(k => k !== '__SHEET_NAME' && k !== '__IS_SHEET_HEADER') || ''
-      const questionMatch = firstKey.match(/Pregunta[:\s]*(.+)/i)
-      if (questionMatch) topic = questionMatch[1].trim()
-      else if (!topic) topic = firstKey.trim()
-    }
-
-    const apt = String(row[firstKey] || '').trim()
-    // BUG 2: Luxor stores the vote in 'Resultado'; legacy uses '__EMPTY'
-    const voto = String(
-      row['Resultado'] || row['__EMPTY'] || row['Voto'] || row['RESULTADO'] || ''
-    ).trim().toLowerCase()
-    const summaryLabel = String(row['__EMPTY_2'] || '').trim().toLowerCase()
-    const summaryCount = row['__EMPTY_3']
-    const summaryPctVal = row['__EMPTY_4']
-
-    // Skip header rows / rows whose unit column is blank
-    if (apt.toLowerCase() === 'apartamento' || apt === '') continue
-
-    // Extract summary totals (rows with __EMPTY_2 = Si/No and a count)
-    if ((summaryLabel === 'si' || summaryLabel === 'sí') && summaryCount !== '' && summaryCount !== undefined) {
-      const n = Number(summaryCount)
+    const label = String(row['__EMPTY_2'] || '').trim().toLowerCase()
+    const cnt = row['__EMPTY_3']
+    const pctv = row['__EMPTY_4']
+    if ((label === 'si' || label === 'sí') && cnt !== '' && cnt !== undefined) {
+      const n = Number(cnt)
       if (!isNaN(n) && n > 0) {
         summaryYes = n
-        if (summaryPctVal !== '' && summaryPctVal !== undefined) {
-          summaryPct = Math.round(Number(summaryPctVal) * 100 * 100) / 100
-        }
+        if (pctv !== '' && pctv !== undefined) summaryPct = Math.round(Number(pctv) * 10000) / 100
       }
     }
-    if (summaryLabel === 'no' && summaryCount !== '' && summaryCount !== undefined) {
-      const n = Number(summaryCount)
+    if (label === 'no' && cnt !== '' && cnt !== undefined) {
+      const n = Number(cnt)
       if (!isNaN(n)) summaryNo = n
-    }
-
-    // Count individual votes
-    if (apt.toLowerCase().includes('apartamento') || apt.match(/^[A-Z]\d+/)) {
-      if (voto === 'si' || voto === 'sí') yesCount++
-      else if (voto === 'no') noCount++
     }
   }
 
-  // Flush the final (or only) question
-  flushBlock()
+  // ── Auto-detect the vote column ──────────────────────────────────────────────
+  // The vote column is the one whose cells most often read as a vote. This is robust
+  // to arbitrary column names ('Resultado', 'Voto', '__EMPTY_n'…) and to title/offset
+  // header rows, which the old fixed-column lookup could not handle.
+  const colHits = new Map<string, number>()
+  for (const row of rows) {
+    for (const k of Object.keys(row)) {
+      if (k === '__SHEET_NAME' || k === '__IS_SHEET_HEADER') continue
+      if (classifyVote(row[k])) colHits.set(k, (colHits.get(k) || 0) + 1)
+    }
+  }
+  let voteKey = ''
+  let bestHits = 0
+  for (const [k, c] of colHits) { if (c > bestHits) { bestHits = c; voteKey = k } }
 
+  let yes = 0, no = 0, abstain = 0
+  if (voteKey) {
+    for (const row of rows) {
+      const v = classifyVote(row[voteKey])
+      if (v === 'yes') yes++
+      else if (v === 'no') no++
+      else if (v === 'abstain') abstain++
+    }
+  }
+
+  // Prefer explicit summary counts when present; otherwise use the per-row tally.
+  const finalYes = summaryYes !== null ? summaryYes : yes
+  const finalNo = summaryNo !== null ? summaryNo : no
+  const finalPct = summaryPct !== null
+    ? summaryPct
+    : (finalYes + finalNo > 0 ? Math.round((finalYes / (finalYes + finalNo)) * 10000) / 100 : 0)
+
+  return {
+    topic,
+    yes_votes: finalYes,
+    no_votes: finalNo,
+    abstentions: abstain || undefined,
+    pct_yes: finalPct,
+    approved: finalYes > finalNo,
+  }
+}
+
+export function parseVotaciones(rows: Record<string, unknown>[]): VotationRecord[] {
+  if (!rows || rows.length === 0) return []
+
+  // Multi-sheet: zipExtractor prefixes each sheet's rows with a sentinel
+  // { __SHEET_NAME, __IS_SHEET_HEADER }. Split into one block (question) per sheet.
+  // Legacy single-sheet input arrives with no sentinel → a single block.
+  const blocks: VoteBlock[] = []
+  let current: VoteBlock | null = null
+  for (const row of rows) {
+    if (String(row['__IS_SHEET_HEADER'] || '') === 'true') {
+      if (current) blocks.push(current)
+      current = { topic: String(row['__SHEET_NAME'] || '').trim(), rows: [] }
+    } else {
+      if (!current) current = { topic: '', rows: [] }
+      current.rows.push(row)
+    }
+  }
+  if (current) blocks.push(current)
+
+  const records: VotationRecord[] = []
+  for (const block of blocks) {
+    const rec = tallyBlock(block.topic, block.rows)
+    if (rec) records.push(rec)
+  }
   return records
 }
 

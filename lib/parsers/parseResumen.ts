@@ -11,17 +11,17 @@ const MONTH_MAP: Record<string, number> = {
 }
 
 function extractDate(text: string): string {
-  // Format: "lunes, 21 de abril de 2025" — also convocatoria "jueves, 21 mayo de 2026"
-  // (the "de" before the month is optional).
-  const m1 = text.match(/(?:lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo),?\s*\d{1,2}\s+(?:de\s+)?\w+\s+de\s+\d{4}/i)
-  if (m1) return m1[0]
-  // Format: "21 de abril de 2025" / "21 mayo de 2026" (no weekday, optional "de")
-  const m2 = text.match(/\d{1,2}\s+(?:de\s+)?(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de\s+\d{4}/i)
-  if (m2) return m2[0]
-  // Format: "Fecha: 07 de abril de 2026" — Hypal resumen header
-  const m2b = text.match(/[Ff]echa[:\s]+([\d]{1,2}\s+de\s+\w+\s+de\s+\d{4})/i)
+  // "lunes, 21 de abril de 2025" / convocatoria "jueves, 21 mayo de 2026" / "… del 2026".
+  // The "de" before the month is optional; the year connector may be "de" or "del".
+  const m1 = text.match(/(?:lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo),?\s*\d{1,2}\s+(?:de\s+)?[a-záéíóú]+\s+del?\s+\d{4}/i)
+  if (m1) return m1[0].trim()
+  // "21 de abril de 2025" / "21 mayo de 2026" / "21 de mayo del 2026" (no weekday).
+  const m2 = text.match(/\d{1,2}\s+(?:de\s+)?(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+del?\s+\d{4}/i)
+  if (m2) return m2[0].trim()
+  // "Fecha: 07 de abril de 2026" — Hypal resumen / convocatoria header.
+  const m2b = text.match(/[Ff]echa[:\s]+([\d]{1,2}\s+(?:de\s+)?[a-záéíóú]+\s+del?\s+\d{4})/i)
   if (m2b) return m2b[1].trim()
-  // Format: "21/04/2025"
+  // "21/04/2025" or "21-04-2025".
   const m3 = text.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}/)
   if (m3) return m3[0]
   return '[FECHA PENDIENTE — proveer en Pre-flight]'
@@ -29,11 +29,16 @@ function extractDate(text: string): string {
 
 function extractTime(text: string, type: 'start' | 'end'): string {
   if (type === 'start') {
-    const m = text.match(/(?:inicio|inicia|siendo las?|a las?)(?:las?\s+)?(\d{1,2}:\d{2}\s*(?:am|pm|p\.m\.|a\.m\.)?)/i)
+    const m = text.match(/(?:inicio|inicia|siendo las?|a las?|a partir de las?)(?:\s*las?\s+)?(\d{1,2}:\d{2}\s*(?:a\.?\s?m\.?|p\.?\s?m\.?)?)/i)
     if (m) return m[1].trim()
-    // Convocatoria style "6:00 p.m." — accept am/pm with or without periods
-    const m2 = text.match(/(\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?))/i)
+    // Convocatoria "6:00 p.m." / "6:00 PM" — accept am/pm with or without periods/space
+    const m2 = text.match(/(\d{1,2}:\d{2}\s*(?:a\.?\s?m\.?|p\.?\s?m\.?))/i)
     if (m2) return m2[1].trim()
+    // "6 p.m." (hour only, with am/pm) and "18:00 horas" (24h)
+    const m3 = text.match(/\b(\d{1,2}\s*(?:a\.?\s?m\.?|p\.?\s?m\.?))/i)
+    if (m3) return m3[1].trim()
+    const m4 = text.match(/\b(\d{1,2}:\d{2})\s*horas?\b/i)
+    if (m4) return m4[1].trim()
   } else {
     const m = text.match(/(?:siendo las?|terminó|finalizó|se da por terminad[ao]|damos por terminada).{0,30}?(\d{1,2}:\d{2}\s*(?:am|pm|p\.m\.)?)/i)
     if (m) return m[1].trim()
@@ -81,12 +86,17 @@ function extractQuorum(text: string): { total: number; present: number; pct: num
   // ── Total units of the PH ───────────────────────────────────────────────
   // Patterns: "274 unidades que conforman", "cuenta con 274", "total de 274", "PH tiene 274"
   const totalPatterns = [
-    /(\d+)\s+(?:unidades|propietarios)\s+(?:inmobiliarias?\s+)?que\s+(?:conforman|componen|integran)/i,
-    /(?:cuenta|cuentan)\s+con\s+(\d+)\s+(?:unidades|propietarios)/i,
-    /(?:total\s+de|un\s+total\s+de)\s+(\d+)\s+(?:unidades|propietarios)/i,
-    /(?:PH|propiedad\s+horizontal)\s+(?:cuenta|tiene|compuesto|conformado)\s+(?:con\s+)?(\d+)/i,
-    // Hypal resumen header: "Total Unidades: 274" or "Unidades totales: 274"
-    /(?:total\s+unidades?|unidades?\s+totales?)\s*[:\-]\s*(\d+)/i,
+    /(\d+)\s+(?:unidades|propietarios|apartamentos)\s+(?:inmobiliarias?\s+)?(?:que\s+)?(?:conforman|componen|integran|constituyen)/i,
+    /(?:cuenta|cuentan)\s+con\s+(\d+)\s+(?:unidades|propietarios|apartamentos)/i,
+    /(?:total\s+de|un\s+total\s+de)\s+(\d+)\s+(?:unidades|propietarios|apartamentos)/i,
+    /(?:PH|p\.?h\.?|propiedad\s+horizontal|edificio|condominio)\s+(?:cuenta|tiene|compuesto|conformado|consta|integrado)\s+(?:con\s+|de\s+|por\s+)?(\d+)/i,
+    /(?:consta|compuesto|conformado|integrado)\s+(?:de|por)\s+(\d+)\s+(?:unidades|apartamentos|propietarios)/i,
+    // Convocatoria: number spelled out then "(142) unidades"
+    /\(\s*(\d+)\s*\)\s*(?:unidades|apartamentos|propietarios)/i,
+    // Convocatoria: "de las 142 unidades que conforman / del PH"
+    /(?:de\s+las|las)\s+(\d+)\s+(?:unidades|apartamentos)\s+(?:inmobiliarias?\s+)?(?:que\s+(?:conforman|componen|integran)|del?\s+(?:ph|p\.?h|edificio|condominio|inmueble))/i,
+    // Header: "Total Unidades: 274", "Número de unidades: 142"
+    /(?:total\s+unidades?|unidades?\s+totales?|n[uú]mero\s+(?:total\s+)?de\s+unidades?)\s*[:\-]?\s*(\d+)/i,
   ]
   let total = 0
   for (const pattern of totalPatterns) {

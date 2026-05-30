@@ -65,15 +65,50 @@ function detectGender(name: string): 'propietaria' | 'propietario' {
   return 'propietario'
 }
 
+// A Zoom label embedding a building reference, e.g. "P.H Los Álamos", "PH Luxor 300".
+// Used to detect host/management accounts (not individual owners).
+const PH_BUILDING = /\bp\.?\s?h\.?\s+[A-Za-zÁÉÍÓÚÑ]/i
+
+// Corporate/legal-entity owners (a bank, S.A., foundation…). They own units but do
+// not "intervene" in the debate — a representative does. We exclude them from the
+// debate narrative (they still appear in the attendance/quorum table from the xlsx).
+const ENTITY_KEYWORDS = /\b(?:banco|inmobiliaria|promotora|constructora|fundaci[oó]n|asociaci[oó]n|corporaci[oó]n|sociedad|desarrollos?|holding|fideicomiso|compa[ñn][ií]a|inversiones)\b/i
+const ENTITY_SUFFIX = /(?:^|[\s,])(?:s\.?\s?a\.?|s\.?\s?r\.?\s?l\.?|s\.?\s?de\s?r\.?\s?l\.?|ltda\.?|inc\.?|corp\.?)\.?\s*$/i
+function isEntity(s: string): boolean {
+  const n = (s || '').trim()
+  return !!n && (ENTITY_KEYWORDS.test(n) || ENTITY_SUFFIX.test(n))
+}
+
+// A label segment that describes a unit (not a person's name). Covers the legacy
+// "Apartamento 7A Torre B" / "7A TB" forms and the Luxor tower-first "T3 29D".
+function looksLikeUnit(s: string): boolean {
+  return /\b(?:apartamento|apto|torre|local|oficina)\b/i.test(s) ||
+         /\bT\s*\d{1,3}\b/i.test(s) ||          // tower code T3
+         /\b\d{1,4}\s?[A-Za-z]\b/.test(s) ||     // apt code 29D / 7A
+         /\bT[AB]\b/i.test(s)                    // TA / TB
+}
+// A pipe segment that is the person's name (neither a unit nor a building label).
+function isNameSegment(s: string): boolean {
+  return !looksLikeUnit(s) && !PH_BUILDING.test(s)
+}
+
 function detectRole(speakerRaw: string, speakerName: string): DebateBlock['speaker_role'] {
   const raw = speakerRaw.toLowerCase()
   const name = speakerName.toLowerCase()
 
-  // FPH-015: skip speaker whose name IS the PH building
-  // Hypal sometimes labels the host account as "PH Los Alamos", "P.H. Torre Alta", etc.
-  if (/^p\.?h\.?\s+\w/i.test(speakerRaw.trim()) || /^p\.?h\.?\s+\w/i.test(speakerName.trim())) {
+  // FPH-015: the host account labeled AS the building ("PH Luxor 300", "P.H. Torre Alta")
+  // → logistica (skipped). Anchored at the start = it's the building's own account.
+  if (/^p\.?\s?h\.?\s+\w/i.test(speakerRaw.trim()) || /^p\.?\s?h\.?\s+\w/i.test(speakerName.trim())) {
     return 'logistica'
   }
+
+  // Corporate/entity owner → exclude from debate (kept in the attendance table).
+  if (isEntity(speakerRaw) || isEntity(speakerName)) return 'logistica'
+
+  // Management/administration representative whose label embeds a building reference
+  // AFTER a name (e.g. "Sadia De Gonzalez · P.H Los Álamos"). They are external staff,
+  // not an owner — render as administración, never as a propietario/a of some unit.
+  if (PH_BUILDING.test(speakerRaw) || PH_BUILDING.test(speakerName)) return 'administracion'
 
   if (LOGISTICA_NAMES.some(l => raw.includes(l) || name.includes(l))) return 'logistica'
 
@@ -99,25 +134,53 @@ function detectRole(speakerRaw: string, speakerName: string): DebateBlock['speak
 }
 
 function extractUnit(speakerRaw: string): string | undefined {
-  const m1 = speakerRaw.match(/[Aa](?:partamento|pto)\.?\s*(\d+[A-H])\s*(?:Torre|T\.?)?\s*([AB])?/i)
+  // Hypal/Zoom labels are usually "Unidad | Nombre". With a pipe, only consider the
+  // unit-like segment so a name fragment is never mistaken for a unit.
+  const parts = speakerRaw.split('|').map(s => s.trim()).filter(Boolean)
+  let hay = speakerRaw
+  if (parts.length > 1) {
+    const u = parts.find(looksLikeUnit)
+    if (!u) return undefined
+    hay = u
+  }
+
+  // Luxor tower-first: "T3 29D", "Torre 3 29D", "Apartamento T3 29D", "T3-29D".
+  const mLux = hay.match(/\b(?:Torre\s*|T)\s*(\d{1,3})\s*[-\s]+\s*(\d{1,4}\s?[A-Za-z])\b/i)
+  if (mLux) return `T${mLux[1]} ${mLux[2].replace(/\s+/g, '').toUpperCase()}`
+
+  // Legacy: "Apartamento 7A Torre B" / "Apto 7A".
+  const m1 = hay.match(/[Aa](?:partamento|pto)\.?\s*(\d+[A-H])\s*(?:Torre|T\.?)?\s*([AB])?/i)
   if (m1) {
     const unit = m1[1]
     const tower = m1[2] ? `T${m1[2].toUpperCase()}-` : ''
     return `${tower}${unit}`
   }
-  const m2 = speakerRaw.match(/(\d+[A-H])\s*(?:Torre|T\.?)?\s*([AB])/i)
+  // Legacy: "7A Torre B" / "7A TB".
+  const m2 = hay.match(/(\d+[A-H])\s*(?:Torre|T\.?)?\s*([AB])/i)
   if (m2) return `T${m2[2].toUpperCase()}-${m2[1]}`
   return undefined
 }
 
 function extractSpeakerName(speakerRaw: string): string {
+  const parts = speakerRaw.split('|').map(s => s.trim()).filter(Boolean)
   let name = speakerRaw
-    .replace(/[Aa]partamento\s+\d+[A-H]?\s*(?:[|]\s*)?/i, '')
-    .replace(/[Aa]pto\.?\s*\d+[A-H]?\s*(?:[|]\s*)?/i, '')
-    .replace(/Torre\s*[AB]\s*(?:[|]\s*)?/i, '')
-    .replace(/\b T[AB]\b\s*(?:[|]\s*)?/g, '')
-    .replace(/\d+[A-H]\s*(?:[|]\s*)?/g, '')
-    .replace(/\|/g, '')
+  if (parts.length > 1) {
+    // Keep the segment(s) that are the actual name (drop unit / building segments).
+    const nameParts = parts.filter(isNameSegment)
+    name = (nameParts.length ? nameParts : parts).join(' ')
+  } else {
+    // No pipe: drop a trailing embedded building reference ("Nombre … P.H Los Álamos").
+    name = name.replace(/\bp\.?\s?h\.?\s+.*/i, '').trim() || name
+  }
+  // Strip any residual unit tokens (covers the no-pipe case and stray prefixes).
+  name = name
+    .replace(/\b[Aa](?:partamento|pto)\.?\b/gi, '')
+    .replace(/\bTorre\s*[A-H0-9]+\b/gi, '')
+    .replace(/\bT\s*\d{1,3}\b/gi, '')          // tower code T3
+    .replace(/\b\d{1,4}\s?[A-H]\b/gi, '')       // apt code 29D / 7A
+    .replace(/\bT[AB]\b/gi, '')
+    .replace(/\|/g, ' ')
+    .replace(/\s{2,}/g, ' ')
     .trim()
   return name.replace(/\b\w/g, c => c.toUpperCase()).trim()
 }
