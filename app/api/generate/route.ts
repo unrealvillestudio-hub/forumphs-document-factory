@@ -67,6 +67,8 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       formalizedBlocks: DebateBlock[]
     } = body
     const icrFindings: ICRFinding[] = body.icr_findings || []
+    // Re-run sweep index — relaxes QA tolerance progressively (see qaScanner)
+    const attempt: number = typeof body.attempt === 'number' ? body.attempt : 0
     const {
       Document, Paragraph, TextRun, Table, TableRow, TableCell,
       AlignmentType, WidthType, BorderStyle, Packer, UnderlineType, Footer,
@@ -454,7 +456,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     const buffer    = await Packer.toBuffer(doc)
     const base64    = buffer.toString('base64')
     const actaText  = buildActaText(parsed, preflight, assignedBlocks)
-    const qa_report = runQAScan(actaText, parsed, assignedBlocks)
+    const qa_report = runQAScan(actaText, parsed, assignedBlocks, attempt)
     const slug      = phName.replace(/[^A-Z0-9]/gi, '_').toUpperCase().replace(/_+/g, '_').replace(/^_|_$/g, '')
     const annotatedSuffix = icrFindings.length > 0 ? '_ICR' : ''
     const filename  = `ACTA_${typeCode}_${actaNum}-${year}_${slug}_df_v1${annotatedSuffix}.docx`

@@ -36,6 +36,11 @@ const PHASES: { keys: Step[]; label: string }[] = [
   { keys: ['qa', 'icr_review'], label: 'QA · ICR' },
 ]
 
+// Progressive QA re-run sweeps: sweep 1 = attempt 0 … up to MAX_SWEEPS.
+// Each sweep raises the Edge Function formalization tolerance (retryAttempt)
+// and relaxes the QA scanner thresholds, so the completeness score can climb.
+const MAX_SWEEPS = 4
+
 // ── Answer coercion helpers (Pre-flight values arrive as string|number|boolean) ──
 const asText = (v: string | number | boolean | undefined): string | undefined =>
   v === undefined || v === '' ? undefined : String(v)
@@ -134,6 +139,7 @@ export default function DocumentFactoryPage() {
           preflight,
           formalizedBlocks: blocks,
           icr_findings: findings,
+          attempt: retry,
         }),
       })
       const json = (await res.json()) as GenerateResponse
@@ -196,7 +202,7 @@ export default function DocumentFactoryPage() {
     setGen(null); setError(''); setRetry(0)
   }
 
-  const regenerate = () => { setRetry(r => r + 1); setStep('formalize') }
+  const regenerate = () => { setRetry(r => Math.min(r + 1, MAX_SWEEPS - 1)); setStep('formalize') }
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
@@ -268,6 +274,8 @@ export default function DocumentFactoryPage() {
               onRegenerate={regenerate}
               onContinue={runICR}
               continueLabel="Revisión ICR →"
+              attempt={retry}
+              maxAttempts={MAX_SWEEPS}
             />
             <div style={{ display: 'flex', gap: 12, marginTop: 16, flexWrap: 'wrap' }}>
               <button className="df-btn-primary" onClick={downloadDocx} style={{ padding: '12px 28px', fontSize: 15 }}>

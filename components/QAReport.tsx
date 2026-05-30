@@ -11,6 +11,8 @@ interface QAReportViewProps {
   showDownload?: boolean
   onContinue?: () => void
   continueLabel?: string
+  attempt?: number        // 0-based re-run sweep index
+  maxAttempts?: number    // total sweeps allowed
 }
 
 const ERROR_LABELS: Record<string, string> = {
@@ -24,7 +26,11 @@ const ERROR_LABELS: Record<string, string> = {
   GENDER_MISMATCH: 'Género incorrecto',
 }
 
-export default function QAReportView({ report, wordCount, filename, onDownload, onRegenerate, showDownload, onContinue, continueLabel }: QAReportViewProps) {
+export default function QAReportView({ report, wordCount, filename, onDownload, onRegenerate, showDownload, onContinue, continueLabel, attempt, maxAttempts }: QAReportViewProps) {
+  const maxSweeps = maxAttempts ?? 4
+  const sweep = (attempt ?? 0) + 1
+  const canRegen = sweep < maxSweeps
+
   const verdictColor = {
     PASS: '#4ADE80',
     WARN: '#FBBF24',
@@ -276,15 +282,24 @@ export default function QAReportView({ report, wordCount, filename, onDownload, 
       </div>
 
       {/* Actions */}
-      <div style={{ display: 'flex', gap: 12 }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         {onContinue && (
           <button className="df-btn-primary" onClick={onContinue} style={{ padding: '12px 32px', fontSize: 15 }}>
             {continueLabel || 'Continuar'}
           </button>
         )}
-        <button className="df-btn-ghost" onClick={onRegenerate}>
-          ↺ Regenerar
-        </button>
+        {canRegen ? (
+          <button className="df-btn-ghost" onClick={onRegenerate}>
+            ↺ Nueva barrida
+          </button>
+        ) : (
+          <button className="df-btn-ghost" disabled style={{ opacity: 0.5, cursor: 'not-allowed' }}>
+            Máximo de intentos alcanzado
+          </button>
+        )}
+        <span style={{ fontSize: 12, color: 'var(--parch-dim)' }}>
+          Barrida {sweep} de {maxSweeps}{canRegen ? ' · cada barrida sube la tolerancia del QA' : ''}
+        </span>
       </div>
     </div>
   )
