@@ -124,8 +124,8 @@ function buildDebateSections(
     for (const vote of relatedVotes) {
       paragraphs.push(
         `Se sometió a votación ${vote.topic}. Los resultados fueron los siguientes:\n\n` +
-        `${fmtVotos(vote.yes_votes)} a favor de ${vote.topic}\n\n` +
-        `${fmtVotos(vote.no_votes)} en contra de ${vote.topic}` +
+        `${fmtVotos(vote.yes_votes)} a favor\n\n` +
+        `${fmtVotos(vote.no_votes)} en contra` +
         (vote.abstentions ? `\n\n${conLetras(vote.abstentions)} abstenciones` : '') +
         `\n\n${vote.approved
           ? `✅ **Se aprobó** ${vote.topic} con ${fmtVotos(vote.yes_votes)}${vote.pct_yes != null ? ` que representan el ${fmtPorcentaje(vote.pct_yes)}` : ''}.`

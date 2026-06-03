@@ -27,8 +27,10 @@ const PATTERNS: Array<{ type: QAErrorType; pattern: RegExp }> = [
     pattern: /\b(acá,|porfa\b|ajá\b|mhm\b|uh\b|uhm\b|eh[,\s])\b/gi,
   },
   {
+    // Repeated word, but NOT repeated single-digit number-words: a finca spelled
+    // digit-by-digit ("...siete siete dos dos...") legitimately repeats them.
     type: 'REPEATED_WORD',
-    pattern: /\b(\w{3,})\s+\1\b/gi,
+    pattern: /\b(?!(?:cero|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve)\b)(\w{3,})\s+\1\b/gi,
   },
   {
     type: 'DANGLING_CONJ',
