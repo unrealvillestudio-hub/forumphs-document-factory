@@ -10,6 +10,7 @@ import {
   fmtVotos, fmtUnidades, fmtPorcentaje, fmtHora, fmtFinca, conLetras,
 } from '@/lib/generators/numeroALetras'
 import { matchVoteToSection } from '@/lib/processors/voteMatcher'
+import { resolveBuildingId, enrichAttendanceWithFincas, FINCA_PENDIENTE } from '@/lib/processors/fincaLookup'
 export const runtime = 'nodejs'
 export const maxDuration = 120
 // ── ICR types ─────────────────────────────────────────────────────────────────
@@ -79,6 +80,39 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     const timeStart    = preflight.confirmed_time_start || s.time_start || '[HORA INICIO PENDIENTE]'
     const assignedBlocks       = assignBlocksToSections(formalizedBlocks, s.agenda_items)
     const hasFirstCallNoQuorum = detectFirstCallNoQuorum(parsed.raw_files['transcripcion'] || '')
+
+    // ── FINCA LOOKUP (Fase 2) — deterministic unit→canonical_key→finca ────────
+    // Per-unit finca (Ley 284: cada unidad lleva su finca). SQL/canonical_key
+    // only — never the agent. Unresolved units become [FINCA PENDIENTE] and are
+    // pushed as ICR warnings so Ivette sees exactly what's missing.
+    let fincaByUnit: Record<string, string> = {}
+    const fincaPendientes: string[] = []
+    try {
+      const buildingId = s.building_id || (await resolveBuildingId(phName))
+      if (buildingId && parsed.attendance.length > 0) {
+        const enriched = await enrichAttendanceWithFincas(
+          buildingId,
+          parsed.attendance.map(a => ({ unit: a.unit, tower: a.tower })),
+        )
+        if (enriched) {
+          fincaByUnit = enriched.fincaByUnit
+          fincaPendientes.push(...enriched.pendientes)
+        }
+      }
+    } catch (e) {
+      // Lookup failure is non-fatal: acta still generates, fincas show pendiente.
+      console.error('Finca lookup failed (non-fatal):', e)
+    }
+    // Surface pendientes as ICR findings (one consolidated warning).
+    if (fincaPendientes.length > 0) {
+      icrFindings.push({
+        severity: 'MEDIUM',
+        category: 'DATA_MISMATCH',
+        location: 'Sección 1 — Lista de asistentes',
+        issue: `${fincaPendientes.length} unidad(es) sin finca resuelta: ${fincaPendientes.slice(0, 15).join(', ')}${fincaPendientes.length > 15 ? '…' : ''}.`,
+        suggestion: 'Completar la finca de estas unidades en la base de datos (units.finca) o verificar el código de unidad. La normalización no encontró coincidencia.',
+      })
+    }
     // ── Helpers ──────────────────────────────────────────────────────────────
     const TNR = 'Times New Roman'
     function mdRuns(text: string, size = 22, italic = false) {
@@ -193,6 +227,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         new TableRow({
           children: [
             new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'UNIDAD', bold: true, size: 18, font: TNR })] })] }),
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'FINCA', bold: true, size: 18, font: TNR })] })] }),
             new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'PROPIETARIO/A', bold: true, size: 18, font: TNR })] })] }),
             new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'REPRESENTADO POR', bold: true, size: 18, font: TNR })] })] }),
           ],
@@ -202,6 +237,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
           new TableRow({
             children: [
               new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: rec.unit, size: 18, font: TNR })] })] }),
+              new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: fincaByUnit[rec.unit] || FINCA_PENDIENTE, size: 18, font: TNR })] })] }),
               new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: rec.owner_name, size: 18, font: TNR })] })] }),
               new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: rec.represented_by || '', size: 18, font: TNR })] })] }),
             ],
@@ -211,7 +247,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       docChildren.push(new Table({
         rows: tableRows,
         width: { size: 9360, type: WidthType.DXA },
-        columnWidths: [1800, 4500, 3060],
+        columnWidths: [1500, 1800, 3360, 2700],
       }))
       docChildren.push(emptyLine())
     }
