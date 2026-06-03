@@ -36,7 +36,7 @@ const PATTERNS: Array<{ type: QAErrorType; pattern: RegExp }> = [
   },
   {
     type: 'INCOMPLETE_SENTENCE',
-    pattern: /manifestó que\s+\w{1,5}\./gi,
+    pattern: /manifestó que\s+\w{1,5}\.|\[PENDIENTE DE FORMALIZACION[^\]]*\]/gi,
   },
   {
     type: 'NUMBER_FORMAT',
