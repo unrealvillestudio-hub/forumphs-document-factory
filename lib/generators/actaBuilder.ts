@@ -5,16 +5,12 @@
  */
 
 import type { ParsedHypalZip, PreflightData, DebateBlock } from '../types'
+import {
+  fmtVotos, fmtUnidades, fmtPorcentaje, fmtHora, fmtFinca, conLetras,
+} from './numeroALetras'
 
 // ---- Helper: number formatting ----
-
-function fmtVotes(n: number): string {
-  return `${n} votos`
-}
-
-function fmtPct(n: number): string {
-  return `${n.toFixed(2)}%`
-}
+// Canonical acta format = words + (digits). Single source of truth in numeroALetras.ts.
 
 function fmtMoney(n: number): string {
   return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -41,9 +37,9 @@ function buildHeaderSection(
   const paragraphs: string[] = []
 
   paragraphs.push(
-    `En la ciudad de Panamá, siendo las ${s.time_start} del ${s.date_str}, se reunieron previa ` +
+    `En la ciudad de Panamá, siendo las ${fmtHora(s.time_start)} del ${s.date_str}, se reunieron previa ` +
     `convocatoria los copropietarios del **${phName}**, que se encuentra debidamente inscrita bajo ` +
-    `la Finca número ${finca}, con Código de ubicación número ${codigo} de la Sección de ` +
+    `la Finca número ${fmtFinca(finca)}, con Código de ubicación número ${codigo} de la Sección de ` +
     `Propiedad Horizontal del Registro Público, conforme a lo establecido en la Ley No. 284 ` +
     `de 14 de febrero de 2022 de Propiedad Horizontal, dicha reunión se llevó a cabo de manera virtual.`
   )
@@ -64,7 +60,8 @@ function buildQuorumSection(
   const s = parsed.skeleton
   const presentUnits = preflight.confirmed_present_units ?? s.present_units ?? parsed.attendance.length
   const totalUnits = s.total_units || 0
-  const pct = totalUnits > 0 ? ((presentUnits / totalUnits) * 100).toFixed(2) : '0'
+  const pctNum = totalUnits > 0 ? (presentUnits / totalUnits) * 100 : 0
+  const minQuorum = Math.floor(totalUnits / 2) + 1
 
   const paragraphs: string[] = []
 
@@ -72,10 +69,10 @@ function buildQuorumSection(
   const hasFirstCallGap = false // TODO: detect from transcription
 
   paragraphs.push(
-    `Siendo las ${s.time_start}, la administración procedió a validar el quórum, ` +
-    `encontrándose presentes o representadas ${presentUnits} unidades inmobiliarias de las ` +
-    `${totalUnits} del total del PH, lo que representa el ${pct}% del total, ` +
-    `cumpliendo con el requisito de la mitad más uno (${Math.floor(totalUnits / 2) + 1} unidades), ` +
+    `Siendo las ${fmtHora(s.time_start)}, la administración procedió a validar el quórum, ` +
+    `encontrándose presentes o representadas ${fmtUnidades(presentUnits)} de las ` +
+    `${conLetras(totalUnits)} del total del PH, lo que representa el ${fmtPorcentaje(pctNum)} del total, ` +
+    `cumpliendo con el requisito de la mitad más uno (${conLetras(minQuorum)} unidades), ` +
     `por lo que en atención a lo dispuesto en el artículo 67 de la Ley 284 de 2022, ` +
     `se da inicio a la Asamblea de Propietarios.`
   )
@@ -83,7 +80,7 @@ function buildQuorumSection(
   // Attendance table note
   if (parsed.attendance.length > 0) {
     paragraphs.push(
-      `Se encontraban presentes o debidamente representadas [${presentUnits} unidades inmobiliarias]{.mark}, a saber:`
+      `Se encontraban presentes o debidamente representadas [${fmtUnidades(presentUnits)}]{.mark}, a saber:`
     )
   }
 
@@ -127,12 +124,12 @@ function buildDebateSections(
     for (const vote of relatedVotes) {
       paragraphs.push(
         `Se sometió a votación ${vote.topic}. Los resultados fueron los siguientes:\n\n` +
-        `${vote.yes_votes} votos a favor de ${vote.topic}\n\n` +
-        `${vote.no_votes} votos en contra de ${vote.topic}` +
-        (vote.abstentions ? `\n\n${vote.abstentions} abstenciones` : '') +
+        `${fmtVotos(vote.yes_votes)} a favor de ${vote.topic}\n\n` +
+        `${fmtVotos(vote.no_votes)} en contra de ${vote.topic}` +
+        (vote.abstentions ? `\n\n${conLetras(vote.abstentions)} abstenciones` : '') +
         `\n\n${vote.approved
-          ? `✅ **Se aprobó** ${vote.topic} con ${vote.yes_votes} votos que representan el ${vote.pct_yes?.toFixed(2)}%.`
-          : `❌ **No se aprobó** ${vote.topic}. Los votos en contra (${vote.no_votes}) superaron los votos a favor (${vote.yes_votes}).`
+          ? `✅ **Se aprobó** ${vote.topic} con ${fmtVotos(vote.yes_votes)}${vote.pct_yes != null ? ` que representan el ${fmtPorcentaje(vote.pct_yes)}` : ''}.`
+          : `❌ **No se aprobó** ${vote.topic}. Los votos en contra (${conLetras(vote.no_votes)}) superaron los votos a favor (${conLetras(vote.yes_votes)}).`
         }`
       )
     }
@@ -159,7 +156,7 @@ function buildClosingSection(
   return {
     title: 'CIERRE',
     content: [
-      `Siendo, el ${s.date_str} a las ${timeEnd}, damos por terminada la sesión de la ${
+      `Siendo, el ${s.date_str} a las ${fmtHora(timeEnd)}, damos por terminada la sesión de la ${
         s.assembly_type === 'EXTRAORDINARIA' ? 'Asamblea Extraordinaria' : 'Asamblea Ordinaria'
       } de Propietarios.`
     ]

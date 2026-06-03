@@ -6,6 +6,9 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import type { GenerateResponse, ParsedHypalZip, PreflightData, DebateBlock, VotationRecord } from '@/lib/types'
+import {
+  fmtVotos, fmtUnidades, fmtPorcentaje, fmtHora, fmtFinca, conLetras,
+} from '@/lib/generators/numeroALetras'
 export const runtime = 'nodejs'
 export const maxDuration = 120
 // ── ICR types ─────────────────────────────────────────────────────────────────
@@ -166,9 +169,9 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       if (banner) docChildren.push(banner)
     }
     docChildren.push(normal(
-      `En la ciudad de Panamá, siendo las ${timeStart} del ${dateStr}, ` +
+      `En la ciudad de Panamá, siendo las ${fmtHora(timeStart)} del ${dateStr}, ` +
       `se reunieron previa convocatoria los copropietarios del ${phName}, debidamente inscrito ` +
-      `bajo la Finca número ${finca}, Código de ubicación ${codigo}, Sección de ` +
+      `bajo la Finca número ${fmtFinca(finca)}, Código de ubicación ${codigo}, Sección de ` +
       `Propiedad Horizontal del Registro Público, conforme a la Ley No. 284 de 14 de febrero ` +
       `de 2022 de Propiedad Horizontal, mediante reunión virtual.`
     ))
@@ -183,24 +186,24 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       const banner = icrSectionBanner(findingsForSection(icrFindings, 1))
       if (banner) docChildren.push(banner)
     }
-    const pct       = totalUnits > 0 ? ((presentUnits / totalUnits) * 100).toFixed(2) : '0'
+    const pctNum    = totalUnits > 0 ? (presentUnits / totalUnits) * 100 : 0
     const minQuorum = Math.floor(totalUnits / 2) + 1
     if (hasFirstCallNoQuorum) {
       docChildren.push(normal(
-        `Siendo las ${timeStart}, se realizó el primer llamado para dar inicio a la Asamblea, ` +
-        `verificándose que no se contaba con el quórum requerido de ${minQuorum} unidades. ` +
+        `Siendo las ${fmtHora(timeStart)}, se realizó el primer llamado para dar inicio a la Asamblea, ` +
+        `verificándose que no se contaba con el quórum requerido de ${fmtUnidades(minQuorum)}. ` +
         `En consecuencia, conforme al artículo 67 de la Ley 284 de 2022, se procedió a realizar un segundo llamado.`
       ))
     }
     docChildren.push(normal(
       `${hasFirstCallNoQuorum ? 'En el segundo llamado, la' : 'La'} administración procedió a validar el quórum, ` +
-      `encontrándose presentes o debidamente representadas ${presentUnits} unidades inmobiliarias ` +
-      `de las ${totalUnits} del total del ${phName}, lo que representa el ${pct}% de los propietarios, ` +
-      `superando el mínimo requerido de ${minQuorum} unidades. En atención a lo dispuesto en el ` +
+      `encontrándose presentes o debidamente representadas ${fmtUnidades(presentUnits)} ` +
+      `de las ${conLetras(totalUnits)} del total del ${phName}, lo que representa el ${fmtPorcentaje(pctNum)} de los propietarios, ` +
+      `superando el mínimo requerido de ${fmtUnidades(minQuorum)}. En atención a lo dispuesto en el ` +
       `artículo 67 de la Ley 284 de 2022, se dio inicio a la Asamblea de Propietarios.`
     ))
     if (parsed.attendance.length > 0) {
-      docChildren.push(normal(`Se encontraban presentes o debidamente representadas ${presentUnits} unidades inmobiliarias, a saber:`))
+      docChildren.push(normal(`Se encontraban presentes o debidamente representadas ${fmtUnidades(presentUnits)}, a saber:`))
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const tableRows: any[] = [
         new TableRow({
@@ -271,13 +274,13 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         const sectionVotes = votesBySectionMap.get(item.number) || []
         for (const vote of sectionVotes) {
           docChildren.push(normal(`Se sometió a votación ${vote.topic}. Los resultados fueron los siguientes:`))
-          docChildren.push(normal(`${vote.yes_votes} votos a favor`, { indent: true }))
-          docChildren.push(normal(`${vote.no_votes} votos en contra`, { indent: true }))
-          if (vote.abstentions) docChildren.push(normal(`${vote.abstentions} abstenciones`, { indent: true }))
+          docChildren.push(normal(`${fmtVotos(vote.yes_votes)} a favor`, { indent: true }))
+          docChildren.push(normal(`${fmtVotos(vote.no_votes)} en contra`, { indent: true }))
+          if (vote.abstentions) docChildren.push(normal(`${conLetras(vote.abstentions)} abstenciones`, { indent: true }))
           docChildren.push(approval(
             vote.approved
-              ? `Se aprobó ${vote.topic} con ${vote.yes_votes} votos que representan el ${vote.pct_yes?.toFixed(2)}%.`
-              : `No se aprobó ${vote.topic}. Votos en contra: ${vote.no_votes}.`,
+              ? `Se aprobó ${vote.topic} con ${fmtVotos(vote.yes_votes)}${vote.pct_yes != null ? ` que representan el ${fmtPorcentaje(vote.pct_yes)}` : ''}.`
+              : `No se aprobó ${vote.topic}. Votos en contra: ${conLetras(vote.no_votes)}.`,
             vote.approved
           ))
         }
@@ -294,18 +297,20 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       }
       for (const vote of parsed.votations) {
         docChildren.push(normal(`Se sometió a votación ${vote.topic}. Los resultados fueron:`))
-        docChildren.push(normal(`${vote.yes_votes} votos a favor`, { indent: true }))
-        docChildren.push(normal(`${vote.no_votes} votos en contra`, { indent: true }))
-        if (vote.abstentions) docChildren.push(normal(`${vote.abstentions} abstenciones`, { indent: true }))
+        docChildren.push(normal(`${fmtVotos(vote.yes_votes)} a favor`, { indent: true }))
+        docChildren.push(normal(`${fmtVotos(vote.no_votes)} en contra`, { indent: true }))
+        if (vote.abstentions) docChildren.push(normal(`${conLetras(vote.abstentions)} abstenciones`, { indent: true }))
         docChildren.push(approval(
-          vote.approved ? `Se aprobó con ${vote.yes_votes} votos (${vote.pct_yes?.toFixed(2)}%).` : `No se aprobó.`,
+          vote.approved
+            ? `Se aprobó con ${fmtVotos(vote.yes_votes)}${vote.pct_yes != null ? ` (${fmtPorcentaje(vote.pct_yes)})` : ''}.`
+            : `No se aprobó.`,
           vote.approved
         ))
       }
     }
     // ── CLOSING ───────────────────────────────────────────────────────────────
     docChildren.push(normal(
-      `Siendo, el ${dateStr} a las ${timeEnd}, damos por terminada la sesión de la ` +
+      `Siendo, el ${dateStr} a las ${fmtHora(timeEnd)}, damos por terminada la sesión de la ` +
       `${typeLabel} de Propietarios.`
     ))
     docChildren.push(emptyLine())

@@ -147,9 +147,12 @@ export function checkCompleteness(
 
   for (const vote of parsed.votations) {
     const topicSnippet = vote.topic.split(/\s+/).slice(0, titleWordCount).join(' ')
+    // Votes now render as words + "(78) votos" (numeroALetras canonical format),
+    // so accept both the bare digit and the parenthesised digit before "votos".
+    const yesRe = new RegExp(`\\(?${vote.yes_votes}\\)?\\s+votos|${vote.yes_votes}\\s+votos`, 'i')
     const hasVote =
       (topicSnippet.length > 0 && new RegExp(escapeRegExp(topicSnippet), 'i').test(fullText)) ||
-      new RegExp(`${vote.yes_votes}\\s+votos`, 'i').test(fullText)
+      yesRe.test(fullText)
     items.push({
       label: `Votación: "${vote.topic.substring(0, 40)}"`,
       passed: hasVote,
