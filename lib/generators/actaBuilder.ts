@@ -8,6 +8,7 @@ import type { ParsedHypalZip, PreflightData, DebateBlock } from '../types'
 import {
   fmtVotos, fmtUnidades, fmtPorcentaje, fmtHora, fmtFinca, conLetras,
 } from './numeroALetras'
+import { matchVoteToSection } from '../processors/voteMatcher'
 
 // ---- Helper: number formatting ----
 // Canonical acta format = words + (digits). Single source of truth in numeroALetras.ts.
@@ -115,11 +116,10 @@ function buildDebateSections(
       }
     }
 
-    // Add votation results if available
-    const relatedVotes = parsed.votations.filter((v, i) => {
-      // Simple heuristic: distribute votes across agenda items
-      return i === (item.number - 2)
-    })
+    // Match votes to this section via the shared matcher (same logic as DOCX).
+    const relatedVotes = parsed.votations.filter(
+      (v, i) => matchVoteToSection(v.topic, agendaItems, i) === item.number
+    )
 
     for (const vote of relatedVotes) {
       paragraphs.push(

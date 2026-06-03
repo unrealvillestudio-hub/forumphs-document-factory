@@ -9,6 +9,7 @@ import type { GenerateResponse, ParsedHypalZip, PreflightData, DebateBlock, Vota
 import {
   fmtVotos, fmtUnidades, fmtPorcentaje, fmtHora, fmtFinca, conLetras,
 } from '@/lib/generators/numeroALetras'
+import { matchVoteToSection } from '@/lib/processors/voteMatcher'
 export const runtime = 'nodejs'
 export const maxDuration = 120
 // ── ICR types ─────────────────────────────────────────────────────────────────
@@ -39,23 +40,6 @@ function findingsForSection(findings: ICRFinding[], sectionNum: number): ICRFind
            ref.includes(`seccion ${sectionNum}`) ||
            ref.includes(`section ${sectionNum}`)
   })
-}
-// ── Vote-to-section matcher ───────────────────────────────────────────────────
-function matchVoteToSection(vote: VotationRecord, agendaItems: { number: number; title: string }[]): number {
-  if (agendaItems.length === 0) return 2
-  const voteWords = new Set(
-    vote.topic.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 4)
-  )
-  let best = agendaItems[0].number
-  let bestScore = 0
-  for (const item of agendaItems) {
-    const titleWords = item.title.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 4)
-    let hits = 0
-    for (const tw of titleWords) { if (voteWords.has(tw)) hits++ }
-    const score = titleWords.length > 0 ? hits / titleWords.length : 0
-    if (score > bestScore) { bestScore = score; best = item.number }
-  }
-  return best
 }
 // ── First-call-without-quorum detector ───────────────────────────────────────
 function detectFirstCallNoQuorum(rawTranscription: string): boolean {
@@ -247,11 +231,12 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     const agendaItems   = s.agenda_items.length > 0 ? s.agenda_items : []
     const sectionOffset = (preflight.has_informe_gestion && preflight.informe_gestion_text) ? 1 : 0
     const votesBySectionMap = new Map<number, VotationRecord[]>()
-    for (const vote of parsed.votations) {
-      const sectionNum = matchVoteToSection(vote, s.agenda_items)
+    const renderedVotes = new Set<VotationRecord>()
+    parsed.votations.forEach((vote, vi) => {
+      const sectionNum = matchVoteToSection(vote.topic, s.agenda_items, vi)
       if (!votesBySectionMap.has(sectionNum)) votesBySectionMap.set(sectionNum, [])
       votesBySectionMap.get(sectionNum)!.push(vote)
-    }
+    })
     if (agendaItems.length > 0) {
       for (const item of agendaItems) {
         const displayNum = item.number + sectionOffset
@@ -273,6 +258,28 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         }
         const sectionVotes = votesBySectionMap.get(item.number) || []
         for (const vote of sectionVotes) {
+          renderedVotes.add(vote)
+          docChildren.push(normal(`Se sometió a votación ${vote.topic}. Los resultados fueron los siguientes:`))
+          docChildren.push(normal(`${fmtVotos(vote.yes_votes)} a favor`, { indent: true }))
+          docChildren.push(normal(`${fmtVotos(vote.no_votes)} en contra`, { indent: true }))
+          if (vote.abstentions) docChildren.push(normal(`${conLetras(vote.abstentions)} abstenciones`, { indent: true }))
+          docChildren.push(approval(
+            vote.approved
+              ? `Se aprobó ${vote.topic} con ${fmtVotos(vote.yes_votes)}${vote.pct_yes != null ? ` que representan el ${fmtPorcentaje(vote.pct_yes)}` : ''}.`
+              : `No se aprobó ${vote.topic}. Votos en contra: ${conLetras(vote.no_votes)}.`,
+            vote.approved
+          ))
+        }
+        docChildren.push(emptyLine())
+      }
+      // Orphan-catch: any vote that matched a section number not present in the
+      // agenda (e.g. a procedural vote before the first agenda point) still gets
+      // rendered — never silently dropped. The Expert Agent flags these for review.
+      const orphanVotes = parsed.votations.filter(v => !renderedVotes.has(v))
+      if (orphanVotes.length > 0) {
+        docChildren.push(sectionTitle(undefined, 'OTRAS VOTACIONES'))
+        for (const vote of orphanVotes) {
+          renderedVotes.add(vote)
           docChildren.push(normal(`Se sometió a votación ${vote.topic}. Los resultados fueron los siguientes:`))
           docChildren.push(normal(`${fmtVotos(vote.yes_votes)} a favor`, { indent: true }))
           docChildren.push(normal(`${fmtVotos(vote.no_votes)} en contra`, { indent: true }))
