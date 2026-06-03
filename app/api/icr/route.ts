@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import type { ParsedHypalZip } from '@/lib/types'
+import { loadAdminPersonnel, adminPersonnelToPromptList } from '@/lib/processors/actaConfig'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -32,22 +33,32 @@ export interface ICRReport {
   auditor_summary: string
 }
 
-const ICR_SYSTEM = `Eres un auditor legal especializado en Actas de Asamblea de Propiedad Horizontal en Panamá bajo la Ley 284 de 2022. Tu función es realizar una revisión ICR (Industrial Consistency Review) de un acta generada automáticamente.
+const LEY_284_RULES = `CONOCIMIENTO LEY 284 DE 2022 (reglas verificables — contrasta el acta contra ellas):
+- CONVOCATORIA (Art. 62, 64): debe constar la convocatoria, su forma (correo, aviso físico) y antelación. Una asamblea sin convocatoria válida es impugnable.
+- QUÓRUM PRIMER LLAMADO (Art. 67): se requiere más de la mitad de los propietarios (mitad más uno). Si el acta dice que con MENOS de la mitad se inició en primer llamado, es CRITICAL.
+- SEGUNDO LLAMADO (Art. 67): si no hubo quórum en el primero, se puede sesionar en segundo llamado con los presentes, SIEMPRE que el acta lo documente. Verifica coherencia entre el quórum reportado y el llamado declarado.
+- MAYORÍAS (Art. 83 y relacionados): las decisiones ordinarias se adoptan por mayoría de los presentes; ciertas decisiones (cuotas extraordinarias, modificación de reglamento, gastos mayores) pueden requerir mayorías calificadas. Si un porcentaje aprobatorio reportado no alcanza el umbral citado en el propio acta, es HIGH o CRITICAL.
+- COHERENCIA NUMÉRICA: los votos a favor + en contra + abstenciones no deben superar el total de presentes/habilitados. Un porcentaje debe ser consistente con los votos sobre el total declarado.
+- FINCA: cada unidad lleva su finca individual. Unidades marcadas [FINCA PENDIENTE] deben señalarse para completar (DATA_MISMATCH, no bloqueante).
+NO inventes números: el generador ya calculó conteos y porcentajes de forma determinística. Tu rol es verificar COHERENCIA y CUMPLIMIENTO, no recalcular.`
+
+const ICR_SYSTEM = `Eres el Agente Experto ForumPHs: auditor legal especializado en Actas de Asamblea de Propiedad Horizontal en Panamá bajo la Ley 284 de 2022. Realizas una revisión ICR (Industrial Consistency Review) del acta completa generada automáticamente.
+
+${LEY_284_RULES}
 
 CATEGORÍAS:
 - VOTE_INCONSISTENCY: Votos que cambian entre secciones, o que contradicen los datos fuente del XLSX
 - ROLE_ERROR: Personal de administración identificado como propietario, o nombres de la empresa como participantes
 - LEGAL_COMPLIANCE: Incumplimiento Ley 284 (quórum, porcentajes, artículos citados incorrectamente)
-- DATA_MISMATCH: Cifras, fechas, nombres que contradicen los datos verificados del XLSX
-- NARRATIVE_QUALITY: Primera persona residual, lenguaje oral, fragmentos incompletos
+- DATA_MISMATCH: Cifras, fechas, nombres que contradicen los datos verificados del XLSX, o fincas pendientes
+- NARRATIVE_QUALITY: Primera persona residual, lenguaje oral, fragmentos incompletos, errores ortográficos, tildes faltantes, concordancia de género/número
 - STRUCTURAL: Secciones faltantes, orden incorrecto, firmas incompletas
-- NARRATIVE_QUALITY también incluye: errores ortográficos, tildes faltantes, concordancia de género/número
 
 ORTOGRAFÍA: Revisa errores ortográficos evidentes (palabras mal escritas, tildes faltantes en palabras clave legales). Panameñismos y nombres propios NO son errores.
 
 SEVERIDADES:
-- CRITICAL: Invalida el acta legalmente (votos incorrectos, quórum falso)
-- HIGH: Compromete la credibilidad (rol equivocado, nombre incorrecto)  
+- CRITICAL: Invalida el acta legalmente (votos incorrectos, quórum falso, mayoría insuficiente declarada como aprobada)
+- HIGH: Compromete la credibilidad (rol equivocado, nombre incorrecto, porcentaje incoherente)
 - MEDIUM: Reduce calidad profesional
 - LOW: Mejoras menores
 
@@ -72,21 +83,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       `"${v.topic}": ${v.yes_votes} sí / ${v.no_votes} no → ${v.approved ? 'APROBADO' : 'NO APROBADO'}`
     ).join('\n')
 
-    // Dynamic coverage: always audit at least 60% of the document
-    const TARGET_COVERAGE = 0.60
-    const MAX_INPUT_CHARS = 15000   // ~12k tokens input, safe for claude-sonnet-4-6
-    const MIN_INPUT_CHARS = 5000
+    // Admin personnel from config (DATA, not hardcode). Falls back internally.
+    const buildingId = parsed.skeleton?.building_id
+    const adminPeople = await loadAdminPersonnel(buildingId)
+    const adminList = adminPersonnelToPromptList(adminPeople)
 
-    const coverageChars = Math.floor(acta_text.length * TARGET_COVERAGE)
-    const inputLimit = Math.max(MIN_INPUT_CHARS, Math.min(coverageChars, MAX_INPUT_CHARS))
-    const coveragePct = Math.round((inputLimit / acta_text.length) * 100)
-
-    const actaTruncated = acta_text.length > inputLimit
-      ? acta_text.substring(0, inputLimit) + `\n[... auditoria cubre ${coveragePct}% del documento (${inputLimit} de ${acta_text.length} caracteres) ...]`
+    // Full-document audit. The acta fits comfortably in context; auditing only
+    // 60% (the old cap) missed findings in the tail (closing, signatures, late
+    // votes). Cap generously to stay within model limits but cover the whole doc.
+    const MAX_INPUT_CHARS = 60000  // ~48k tokens — full acta in practice
+    const actaForAudit = acta_text.length > MAX_INPUT_CHARS
+      ? acta_text.substring(0, MAX_INPUT_CHARS) + `\n[... acta excede ${MAX_INPUT_CHARS} caracteres; auditados los primeros ${MAX_INPUT_CHARS} ...]`
       : acta_text
+    const coveragePct = Math.round((Math.min(acta_text.length, MAX_INPUT_CHARS) / acta_text.length) * 100)
 
-    // Scale output tokens: base 3500 + 500 per 5000 chars, max 8000
-    const dynamicMaxTokens = Math.min(8000, 3500 + Math.floor(inputLimit / 5000) * 500)
+    // Scale output tokens with document size, capped for cost/latency.
+    const dynamicMaxTokens = Math.min(8000, 4000 + Math.floor(actaForAudit.length / 5000) * 400)
 
     const msg = await client.messages.create({
       model: 'claude-sonnet-4-6',
@@ -98,11 +110,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 Asistentes: ${parsed.attendance.length} unidades
 Votaciones:
 ${votesSummary || '(ninguna registrada)'}
-Personal de administración (NO propietarios): Ivette Flores, Iveth, Irja Saldaña, Daniel Puentes, Hypal, empresa administradora
+Personal de administración (NO son propietarios; si aparecen como propietarios o votantes es ROLE_ERROR): ${adminList}
+
+Cobertura de auditoría: ${coveragePct}% del documento.
 
 ACTA GENERADA A AUDITAR:
 ---
-${actaTruncated}
+${actaForAudit}
 ---
 
 Responde SOLO con este JSON:
