@@ -8,7 +8,7 @@ import type { ParsedHypalZip, PreflightData, DebateBlock } from '../types'
 import {
   fmtVotos, fmtUnidades, fmtPorcentaje, fmtHora, fmtFinca, conLetras,
 } from './numeroALetras'
-import { matchVoteToSection } from '../processors/voteMatcher'
+import { matchVoteToSection, describeVoteResult } from '../processors/voteMatcher'
 
 // ---- Helper: number formatting ----
 // Canonical acta format = words + (digits). Single source of truth in numeroALetras.ts.
@@ -122,15 +122,18 @@ function buildDebateSections(
     )
 
     for (const vote of relatedVotes) {
+      const resultText = describeVoteResult(vote, fmtVotos, fmtPorcentaje)
+      // Bold the verdict verb ("Se aprobó" / "No se aprobó") at the start.
+      const boldedResult = resultText.replace(
+        /^(No se aprobó|Se aprobó)/,
+        (m) => `**${m}**`,
+      )
       paragraphs.push(
         `Se sometió a votación ${vote.topic}. Los resultados fueron los siguientes:\n\n` +
         `${fmtVotos(vote.yes_votes)} a favor\n\n` +
         `${fmtVotos(vote.no_votes)} en contra` +
         (vote.abstentions ? `\n\n${conLetras(vote.abstentions)} abstenciones` : '') +
-        `\n\n${vote.approved
-          ? `✅ **Se aprobó** ${vote.topic} con ${fmtVotos(vote.yes_votes)}${vote.pct_yes != null ? ` que representan el ${fmtPorcentaje(vote.pct_yes)}` : ''}.`
-          : `❌ **No se aprobó** ${vote.topic}. Los votos en contra (${conLetras(vote.no_votes)}) superaron los votos a favor (${conLetras(vote.yes_votes)}).`
-        }`
+        `\n\n${vote.approved ? '✅ ' : '❌ '}${boldedResult}`
       )
     }
 

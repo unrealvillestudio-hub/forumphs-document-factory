@@ -147,6 +147,25 @@ export async function resolveBuildingId(phName: string): Promise<string | null> 
 }
 
 /**
+ * Deterministic total-units lookup. The total number of units in a PH is a
+ * REGISTRY fact (buildings.total_units, from the Registro Público), NOT something
+ * to derive from a parsed attendance sheet. Same master rule as finca: an exact
+ * datum that exists in the DB must come from the DB — never from the document.
+ *
+ * Returns the building's total_units, or null if unavailable (caller falls back
+ * to the parsed/skeleton value only as a last resort). A null here is preferable
+ * to trusting a bad parse: it's what produced the 254% quorum bug (Luxor 300
+ * parsed 46, DB has 143).
+ */
+export async function getBuildingTotalUnits(buildingId: string): Promise<number | null> {
+  if (!buildingId) return null
+  const rows = await db('buildings', `id=eq.${buildingId}&select=total_units&limit=1`)
+  if (!rows || rows.length === 0) return null
+  const tu = (rows[0] as { total_units?: number | null }).total_units
+  return typeof tu === 'number' && tu > 0 ? tu : null
+}
+
+/**
  * Convenience: resolve fincas for a list of attendance units in one shot.
  * Returns the enriched records plus the list of unresolved units (for ICR
  * warnings). Pure orchestration over loadBuildingFincas + resolveFinca.
