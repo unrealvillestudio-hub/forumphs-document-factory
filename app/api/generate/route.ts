@@ -6,6 +6,11 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import type { GenerateResponse, ParsedHypalZip, PreflightData, DebateBlock, VotationRecord } from '@/lib/types'
+import {
+  fmtVotos, fmtUnidades, fmtPorcentaje, fmtHora, fmtFinca, conLetras,
+} from '@/lib/generators/numeroALetras'
+import { matchVoteToSection } from '@/lib/processors/voteMatcher'
+import { resolveBuildingId, enrichAttendanceWithFincas, FINCA_PENDIENTE } from '@/lib/processors/fincaLookup'
 export const runtime = 'nodejs'
 export const maxDuration = 120
 // ── ICR types ─────────────────────────────────────────────────────────────────
@@ -36,23 +41,6 @@ function findingsForSection(findings: ICRFinding[], sectionNum: number): ICRFind
            ref.includes(`seccion ${sectionNum}`) ||
            ref.includes(`section ${sectionNum}`)
   })
-}
-// ── Vote-to-section matcher ───────────────────────────────────────────────────
-function matchVoteToSection(vote: VotationRecord, agendaItems: { number: number; title: string }[]): number {
-  if (agendaItems.length === 0) return 2
-  const voteWords = new Set(
-    vote.topic.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 4)
-  )
-  let best = agendaItems[0].number
-  let bestScore = 0
-  for (const item of agendaItems) {
-    const titleWords = item.title.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 4)
-    let hits = 0
-    for (const tw of titleWords) { if (voteWords.has(tw)) hits++ }
-    const score = titleWords.length > 0 ? hits / titleWords.length : 0
-    if (score > bestScore) { bestScore = score; best = item.number }
-  }
-  return best
 }
 // ── First-call-without-quorum detector ───────────────────────────────────────
 function detectFirstCallNoQuorum(rawTranscription: string): boolean {
@@ -92,6 +80,39 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     const timeStart    = preflight.confirmed_time_start || s.time_start || '[HORA INICIO PENDIENTE]'
     const assignedBlocks       = assignBlocksToSections(formalizedBlocks, s.agenda_items)
     const hasFirstCallNoQuorum = detectFirstCallNoQuorum(parsed.raw_files['transcripcion'] || '')
+
+    // ── FINCA LOOKUP (Fase 2) — deterministic unit→canonical_key→finca ────────
+    // Per-unit finca (Ley 284: cada unidad lleva su finca). SQL/canonical_key
+    // only — never the agent. Unresolved units become [FINCA PENDIENTE] and are
+    // pushed as ICR warnings so Ivette sees exactly what's missing.
+    let fincaByUnit: Record<string, string> = {}
+    const fincaPendientes: string[] = []
+    try {
+      const buildingId = s.building_id || (await resolveBuildingId(phName))
+      if (buildingId && parsed.attendance.length > 0) {
+        const enriched = await enrichAttendanceWithFincas(
+          buildingId,
+          parsed.attendance.map(a => ({ unit: a.unit, tower: a.tower })),
+        )
+        if (enriched) {
+          fincaByUnit = enriched.fincaByUnit
+          fincaPendientes.push(...enriched.pendientes)
+        }
+      }
+    } catch (e) {
+      // Lookup failure is non-fatal: acta still generates, fincas show pendiente.
+      console.error('Finca lookup failed (non-fatal):', e)
+    }
+    // Surface pendientes as ICR findings (one consolidated warning).
+    if (fincaPendientes.length > 0) {
+      icrFindings.push({
+        severity: 'MEDIUM',
+        category: 'DATA_MISMATCH',
+        location: 'Sección 1 — Lista de asistentes',
+        issue: `${fincaPendientes.length} unidad(es) sin finca resuelta: ${fincaPendientes.slice(0, 15).join(', ')}${fincaPendientes.length > 15 ? '…' : ''}.`,
+        suggestion: 'Completar la finca de estas unidades en la base de datos (units.finca) o verificar el código de unidad. La normalización no encontró coincidencia.',
+      })
+    }
     // ── Helpers ──────────────────────────────────────────────────────────────
     const TNR = 'Times New Roman'
     function mdRuns(text: string, size = 22, italic = false) {
@@ -166,9 +187,9 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       if (banner) docChildren.push(banner)
     }
     docChildren.push(normal(
-      `En la ciudad de Panamá, siendo las ${timeStart} del ${dateStr}, ` +
+      `En la ciudad de Panamá, siendo las ${fmtHora(timeStart)} del ${dateStr}, ` +
       `se reunieron previa convocatoria los copropietarios del ${phName}, debidamente inscrito ` +
-      `bajo la Finca número ${finca}, Código de ubicación ${codigo}, Sección de ` +
+      `bajo la Finca número ${fmtFinca(finca)}, Código de ubicación ${codigo}, Sección de ` +
       `Propiedad Horizontal del Registro Público, conforme a la Ley No. 284 de 14 de febrero ` +
       `de 2022 de Propiedad Horizontal, mediante reunión virtual.`
     ))
@@ -183,29 +204,30 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       const banner = icrSectionBanner(findingsForSection(icrFindings, 1))
       if (banner) docChildren.push(banner)
     }
-    const pct       = totalUnits > 0 ? ((presentUnits / totalUnits) * 100).toFixed(2) : '0'
+    const pctNum    = totalUnits > 0 ? (presentUnits / totalUnits) * 100 : 0
     const minQuorum = Math.floor(totalUnits / 2) + 1
     if (hasFirstCallNoQuorum) {
       docChildren.push(normal(
-        `Siendo las ${timeStart}, se realizó el primer llamado para dar inicio a la Asamblea, ` +
-        `verificándose que no se contaba con el quórum requerido de ${minQuorum} unidades. ` +
+        `Siendo las ${fmtHora(timeStart)}, se realizó el primer llamado para dar inicio a la Asamblea, ` +
+        `verificándose que no se contaba con el quórum requerido de ${fmtUnidades(minQuorum)}. ` +
         `En consecuencia, conforme al artículo 67 de la Ley 284 de 2022, se procedió a realizar un segundo llamado.`
       ))
     }
     docChildren.push(normal(
       `${hasFirstCallNoQuorum ? 'En el segundo llamado, la' : 'La'} administración procedió a validar el quórum, ` +
-      `encontrándose presentes o debidamente representadas ${presentUnits} unidades inmobiliarias ` +
-      `de las ${totalUnits} del total del ${phName}, lo que representa el ${pct}% de los propietarios, ` +
-      `superando el mínimo requerido de ${minQuorum} unidades. En atención a lo dispuesto en el ` +
+      `encontrándose presentes o debidamente representadas ${fmtUnidades(presentUnits)} ` +
+      `de las ${conLetras(totalUnits)} del total del ${phName}, lo que representa el ${fmtPorcentaje(pctNum)} de los propietarios, ` +
+      `superando el mínimo requerido de ${fmtUnidades(minQuorum)}. En atención a lo dispuesto en el ` +
       `artículo 67 de la Ley 284 de 2022, se dio inicio a la Asamblea de Propietarios.`
     ))
     if (parsed.attendance.length > 0) {
-      docChildren.push(normal(`Se encontraban presentes o debidamente representadas ${presentUnits} unidades inmobiliarias, a saber:`))
+      docChildren.push(normal(`Se encontraban presentes o debidamente representadas ${fmtUnidades(presentUnits)}, a saber:`))
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const tableRows: any[] = [
         new TableRow({
           children: [
             new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'UNIDAD', bold: true, size: 18, font: TNR })] })] }),
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'FINCA', bold: true, size: 18, font: TNR })] })] }),
             new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'PROPIETARIO/A', bold: true, size: 18, font: TNR })] })] }),
             new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'REPRESENTADO POR', bold: true, size: 18, font: TNR })] })] }),
           ],
@@ -215,6 +237,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
           new TableRow({
             children: [
               new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: rec.unit, size: 18, font: TNR })] })] }),
+              new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: fincaByUnit[rec.unit] || FINCA_PENDIENTE, size: 18, font: TNR })] })] }),
               new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: rec.owner_name, size: 18, font: TNR })] })] }),
               new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: rec.represented_by || '', size: 18, font: TNR })] })] }),
             ],
@@ -224,7 +247,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       docChildren.push(new Table({
         rows: tableRows,
         width: { size: 9360, type: WidthType.DXA },
-        columnWidths: [1800, 4500, 3060],
+        columnWidths: [1500, 1800, 3360, 2700],
       }))
       docChildren.push(emptyLine())
     }
@@ -244,11 +267,12 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     const agendaItems   = s.agenda_items.length > 0 ? s.agenda_items : []
     const sectionOffset = (preflight.has_informe_gestion && preflight.informe_gestion_text) ? 1 : 0
     const votesBySectionMap = new Map<number, VotationRecord[]>()
-    for (const vote of parsed.votations) {
-      const sectionNum = matchVoteToSection(vote, s.agenda_items)
+    const renderedVotes = new Set<VotationRecord>()
+    parsed.votations.forEach((vote, vi) => {
+      const sectionNum = matchVoteToSection(vote.topic, s.agenda_items, vi)
       if (!votesBySectionMap.has(sectionNum)) votesBySectionMap.set(sectionNum, [])
       votesBySectionMap.get(sectionNum)!.push(vote)
-    }
+    })
     if (agendaItems.length > 0) {
       for (const item of agendaItems) {
         const displayNum = item.number + sectionOffset
@@ -270,14 +294,36 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         }
         const sectionVotes = votesBySectionMap.get(item.number) || []
         for (const vote of sectionVotes) {
+          renderedVotes.add(vote)
           docChildren.push(normal(`Se sometió a votación ${vote.topic}. Los resultados fueron los siguientes:`))
-          docChildren.push(normal(`${vote.yes_votes} votos a favor`, { indent: true }))
-          docChildren.push(normal(`${vote.no_votes} votos en contra`, { indent: true }))
-          if (vote.abstentions) docChildren.push(normal(`${vote.abstentions} abstenciones`, { indent: true }))
+          docChildren.push(normal(`${fmtVotos(vote.yes_votes)} a favor`, { indent: true }))
+          docChildren.push(normal(`${fmtVotos(vote.no_votes)} en contra`, { indent: true }))
+          if (vote.abstentions) docChildren.push(normal(`${conLetras(vote.abstentions)} abstenciones`, { indent: true }))
           docChildren.push(approval(
             vote.approved
-              ? `Se aprobó ${vote.topic} con ${vote.yes_votes} votos que representan el ${vote.pct_yes?.toFixed(2)}%.`
-              : `No se aprobó ${vote.topic}. Votos en contra: ${vote.no_votes}.`,
+              ? `Se aprobó ${vote.topic} con ${fmtVotos(vote.yes_votes)}${vote.pct_yes != null ? ` que representan el ${fmtPorcentaje(vote.pct_yes)}` : ''}.`
+              : `No se aprobó ${vote.topic}. Votos en contra: ${conLetras(vote.no_votes)}.`,
+            vote.approved
+          ))
+        }
+        docChildren.push(emptyLine())
+      }
+      // Orphan-catch: any vote that matched a section number not present in the
+      // agenda (e.g. a procedural vote before the first agenda point) still gets
+      // rendered — never silently dropped. The Expert Agent flags these for review.
+      const orphanVotes = parsed.votations.filter(v => !renderedVotes.has(v))
+      if (orphanVotes.length > 0) {
+        docChildren.push(sectionTitle(undefined, 'OTRAS VOTACIONES'))
+        for (const vote of orphanVotes) {
+          renderedVotes.add(vote)
+          docChildren.push(normal(`Se sometió a votación ${vote.topic}. Los resultados fueron los siguientes:`))
+          docChildren.push(normal(`${fmtVotos(vote.yes_votes)} a favor`, { indent: true }))
+          docChildren.push(normal(`${fmtVotos(vote.no_votes)} en contra`, { indent: true }))
+          if (vote.abstentions) docChildren.push(normal(`${conLetras(vote.abstentions)} abstenciones`, { indent: true }))
+          docChildren.push(approval(
+            vote.approved
+              ? `Se aprobó ${vote.topic} con ${fmtVotos(vote.yes_votes)}${vote.pct_yes != null ? ` que representan el ${fmtPorcentaje(vote.pct_yes)}` : ''}.`
+              : `No se aprobó ${vote.topic}. Votos en contra: ${conLetras(vote.no_votes)}.`,
             vote.approved
           ))
         }
@@ -294,18 +340,20 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       }
       for (const vote of parsed.votations) {
         docChildren.push(normal(`Se sometió a votación ${vote.topic}. Los resultados fueron:`))
-        docChildren.push(normal(`${vote.yes_votes} votos a favor`, { indent: true }))
-        docChildren.push(normal(`${vote.no_votes} votos en contra`, { indent: true }))
-        if (vote.abstentions) docChildren.push(normal(`${vote.abstentions} abstenciones`, { indent: true }))
+        docChildren.push(normal(`${fmtVotos(vote.yes_votes)} a favor`, { indent: true }))
+        docChildren.push(normal(`${fmtVotos(vote.no_votes)} en contra`, { indent: true }))
+        if (vote.abstentions) docChildren.push(normal(`${conLetras(vote.abstentions)} abstenciones`, { indent: true }))
         docChildren.push(approval(
-          vote.approved ? `Se aprobó con ${vote.yes_votes} votos (${vote.pct_yes?.toFixed(2)}%).` : `No se aprobó.`,
+          vote.approved
+            ? `Se aprobó con ${fmtVotos(vote.yes_votes)}${vote.pct_yes != null ? ` (${fmtPorcentaje(vote.pct_yes)})` : ''}.`
+            : `No se aprobó.`,
           vote.approved
         ))
       }
     }
     // ── CLOSING ───────────────────────────────────────────────────────────────
     docChildren.push(normal(
-      `Siendo, el ${dateStr} a las ${timeEnd}, damos por terminada la sesión de la ` +
+      `Siendo, el ${dateStr} a las ${fmtHora(timeEnd)}, damos por terminada la sesión de la ` +
       `${typeLabel} de Propietarios.`
     ))
     docChildren.push(emptyLine())

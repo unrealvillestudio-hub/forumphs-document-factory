@@ -27,8 +27,10 @@ const PATTERNS: Array<{ type: QAErrorType; pattern: RegExp }> = [
     pattern: /\b(acá,|porfa\b|ajá\b|mhm\b|uh\b|uhm\b|eh[,\s])\b/gi,
   },
   {
+    // Repeated word, but NOT repeated single-digit number-words: a finca spelled
+    // digit-by-digit ("...siete siete dos dos...") legitimately repeats them.
     type: 'REPEATED_WORD',
-    pattern: /\b(\w{3,})\s+\1\b/gi,
+    pattern: /\b(?!(?:cero|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve)\b)(\w{3,})\s+\1\b/gi,
   },
   {
     type: 'DANGLING_CONJ',
@@ -36,7 +38,7 @@ const PATTERNS: Array<{ type: QAErrorType; pattern: RegExp }> = [
   },
   {
     type: 'INCOMPLETE_SENTENCE',
-    pattern: /manifestó que\s+\w{1,5}\./gi,
+    pattern: /manifestó que\s+\w{1,5}\.|\[PENDIENTE DE FORMALIZACION[^\]]*\]/gi,
   },
   {
     type: 'NUMBER_FORMAT',
@@ -147,9 +149,12 @@ export function checkCompleteness(
 
   for (const vote of parsed.votations) {
     const topicSnippet = vote.topic.split(/\s+/).slice(0, titleWordCount).join(' ')
+    // Votes now render as words + "(78) votos" (numeroALetras canonical format),
+    // so accept both the bare digit and the parenthesised digit before "votos".
+    const yesRe = new RegExp(`\\(?${vote.yes_votes}\\)?\\s+votos|${vote.yes_votes}\\s+votos`, 'i')
     const hasVote =
       (topicSnippet.length > 0 && new RegExp(escapeRegExp(topicSnippet), 'i').test(fullText)) ||
-      new RegExp(`${vote.yes_votes}\\s+votos`, 'i').test(fullText)
+      yesRe.test(fullText)
     items.push({
       label: `Votación: "${vote.topic.substring(0, 40)}"`,
       passed: hasVote,

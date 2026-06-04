@@ -12,6 +12,7 @@ export interface ExtractedImage {
 // ── Parsed data structures ─────────────────────────────────────────────────
 export interface SkeletonData {
   ph_name: string
+  building_id?: string      // FPHS buildings.id — enables per-unit finca lookup
   ph_finca?: string
   ph_codigo?: string
   assembly_type: 'ORDINARIA' | 'EXTRAORDINARIA'
@@ -42,6 +43,7 @@ export interface AttendanceRecord {
   owner_name: string
   represented_by?: string
   tower?: string
+  finca?: string            // resolved via canonical_key lookup (Fase 2)
 }
 
 export interface VotationRecord {
