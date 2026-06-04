@@ -68,3 +68,48 @@ export function matchVoteToSection(
   const clampedIdx = Math.min(voteIndex, agendaItems.length - 1)
   return agendaItems[clampedIdx].number
 }
+
+/**
+ * describeVoteResult — coherent natural-language result for a votation.
+ *
+ * Fixes the "0 no supera a 0" bug: the old text in actaBuilder always wrote
+ * "Los votos en contra (N) superaron los votos a favor (M)" on any non-approval,
+ * which is false when yes == no (incl. 0/0 multiple-choice/ranking questions
+ * where the binary sí/no frame doesn't apply) or on a tie.
+ *
+ * Shared by /api/generate (DOCX) and actaBuilder (QA text) so both read the same.
+ */
+export interface VoteLike {
+  topic: string
+  yes_votes: number
+  no_votes: number
+  abstentions?: number
+  pct_yes?: number
+  approved: boolean
+}
+
+export function describeVoteResult(
+  v: VoteLike,
+  fmtVotos: (n: number) => string,
+  fmtPorcentaje: (n: number) => string,
+): string {
+  if (v.approved) {
+    return `Se aprobó ${v.topic} con ${fmtVotos(v.yes_votes)}` +
+      (v.pct_yes != null ? ` que representan el ${fmtPorcentaje(v.pct_yes)}` : '') + '.'
+  }
+  // Not approved — choose a TRUE justification for the specific case.
+  const yes = v.yes_votes ?? 0
+  const no = v.no_votes ?? 0
+  if (yes === 0 && no === 0) {
+    // No binary votes recorded (e.g. multiple-choice / ranking question).
+    return `No se aprobó ${v.topic}: no se registraron votos suficientes para determinar una opción mayoritaria.`
+  }
+  if (yes === no) {
+    return `No se aprobó ${v.topic}: se registró un empate (${fmtVotos(yes)} a favor y ${fmtVotos(no)} en contra), por lo que no se alcanzó la mayoría requerida.`
+  }
+  if (no > yes) {
+    return `No se aprobó ${v.topic}: los votos en contra (${fmtVotos(no)}) superaron los votos a favor (${fmtVotos(yes)}).`
+  }
+  // yes > no but still not approved → didn't reach the required qualified majority.
+  return `No se aprobó ${v.topic}: los votos a favor (${fmtVotos(yes)}) no alcanzaron la mayoría requerida para su aprobación.`
+}

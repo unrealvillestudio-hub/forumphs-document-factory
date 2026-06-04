@@ -6,19 +6,19 @@ const SB_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 
 const LOGISTICA_NAMES = /daniel\s*puentes|daniel\s+p\b|hypal|hipal|moderador\s+virtual/i;
 
-const BOLD_RULE = `FORMATO DE IDENTIFICACION DE INTERVINIENTES (regla obligatoria):
+const BOLD_RULE = `FORMATO DE IDENTIFICACIÓN DE INTERVINIENTES (regla obligatoria):
 
-1. ADMINISTRACION: Formato: "**[Nombre]**, en representacion de la administracion," NUNCA uses articulo antes del nombre.
-2. PROPIETARIO/A: Formato: "La senora/El senor **[Nombre completo], propietaria/o de la unidad inmobiliaria [unidad]**,"
+1. ADMINISTRACIÓN: Formato: "**[Nombre]**, en representación de la administración," NUNCA uses artículo antes del nombre.
+2. PROPIETARIO/A: Formato: "La señora/El señor **[Nombre completo], propietaria/o de la unidad inmobiliaria [unidad]**,"
 3. JUNTA DIRECTIVA: Usa SOLO el cargo sin nombre propio, sin negrita.
 
-NO uses ningun otro formato markdown. NUNCA repitas el nombre si ya aparecio en el mismo parrafo.`;
+NO uses ningún otro formato markdown. NUNCA repitas el nombre si ya apareció en el mismo párrafo.`;
 
 // NUMBER_RULE — acta GOAL escribe todo numero significativo en LETRAS seguido de
 // los digitos entre parentesis. La conversion final determinista la hace el
 // generador (numeroALetras.ts); aqui el modelo NO debe inventar ni alterar cifras.
 const NUMBER_RULE = `NUMEROS (regla obligatoria):
-- Conserva EXACTAMENTE las cifras que aparecen en la intervencion. No redondees, no inventes, no completes.
+- Conserva EXACTAMENTE las cifras que aparecen en la intervención. No redondees, no inventes, no completes.
 - Si el hablante dice un numero (votos, porcentajes, montos, unidades), escribelo en LETRAS seguido del digito entre parentesis: "cuarenta y cinco (45)".
 - Si no estas seguro de una cifra, escribela tal cual aparece, sin parentesis. NUNCA inventes un numero que no se dijo.
 - Horas, montos en dolares y porcentajes siguen la misma regla de letras + (digitos).`;
@@ -29,7 +29,7 @@ NULL solo para contenido 100% tecnico: audio/video/conexion sin ningun contenido
 REGLAS:
 - ${BOLD_RULE}
 - ${NUMBER_RULE}
-- NO resumir. Preservar el argumento completo, por extenso que sea. NO impongas limite de palabras: una intervencion larga debe quedar completa.
+- NO resumir. Preservar el argumento completo, por extenso que sea. NO impongas límite de palabras: una intervención larga debe quedar completa.
 Responde SOLO el parrafo formal o exactamente NULL.`;
 
 const SYS1 = `Eres redactor legal Actas PH Panama. MODO FORZADO - NO PUEDES OMITIR.
@@ -43,7 +43,7 @@ REGLAS:
 Responde SOLO el parrafo formal.`;
 
 const SYS2 = `Eres redactor legal Actas PH Panama. MODO FORZADO MAXIMO.
-Redacta SIEMPRE en tercera persona aunque sea una intervencion muy breve.
+Redacta SIEMPRE en tercera persona aunque sea una intervención muy breve.
 REGLAS:
 - ${BOLD_RULE}
 - ${NUMBER_RULE}
@@ -58,8 +58,8 @@ function speakerPrefix(b: Record<string, string>): string {
   const unit = b.speaker_unit ? `, propietario/a de la unidad inmobiliaria ${b.speaker_unit}` : '';
   return b.speaker_name
     ? isAdmin
-      ? `**${b.speaker_name}**, en representacion de la administracion,`
-      : `La senora/El senor **${b.speaker_name}${unit}**,`
+      ? `**${b.speaker_name}**, en representación de la administración,`
+      : `La señora/El señor **${b.speaker_name}${unit}**,`
     : 'El/La participante';
 }
 
@@ -79,7 +79,7 @@ function templateFormalize(b: Record<string, string>) {
 // (that would re-introduce first-person inside quotes); we record a neutral
 // placeholder that the re-run sweep is expected to replace on a later attempt.
 function fallbackFormalize(b: Record<string, string>): string {
-  return `${speakerPrefix(b)} realizo una intervencion sobre el tema en discusion. [PENDIENTE DE FORMALIZACION — revisar en reproceso]`;
+  return `${speakerPrefix(b)} realizó una intervención sobre el tema en discusión. [PENDIENTE DE FORMALIZACION — revisar en reproceso]`;
 }
 
 // COST LAYER: fire-and-forget token logging

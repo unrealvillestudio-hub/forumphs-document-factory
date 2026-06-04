@@ -9,8 +9,8 @@ import type { GenerateResponse, ParsedHypalZip, PreflightData, DebateBlock, Vota
 import {
   fmtVotos, fmtUnidades, fmtPorcentaje, fmtHora, fmtFinca, conLetras,
 } from '@/lib/generators/numeroALetras'
-import { matchVoteToSection } from '@/lib/processors/voteMatcher'
-import { resolveBuildingId, enrichAttendanceWithFincas, FINCA_PENDIENTE } from '@/lib/processors/fincaLookup'
+import { matchVoteToSection, describeVoteResult } from '@/lib/processors/voteMatcher'
+import { resolveBuildingId, enrichAttendanceWithFincas, getBuildingTotalUnits, FINCA_PENDIENTE } from '@/lib/processors/fincaLookup'
 import { curateImages } from '@/lib/processors/imageCuration'
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -75,12 +75,50 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     const finca        = preflight.finca || s.ph_finca || '[FINCA PENDIENTE]'
     const codigo       = preflight.codigo || s.ph_codigo || '[CÓDIGO PENDIENTE]'
     const presentUnits = preflight.confirmed_present_units ?? s.present_units ?? parsed.attendance.length
-    const totalUnits   = preflight.confirmed_total_units ?? s.total_units ?? 0
     const timeEnd      = preflight.confirmed_time_end || s.time_end || '[HORA FIN]'
     const dateStr      = preflight.confirmed_date_str   || s.date_str   || '[FECHA PENDIENTE]'
     const timeStart    = preflight.confirmed_time_start || s.time_start || '[HORA INICIO PENDIENTE]'
     const assignedBlocks       = assignBlocksToSections(formalizedBlocks, s.agenda_items)
     const hasFirstCallNoQuorum = detectFirstCallNoQuorum(parsed.raw_files['transcripcion'] || '')
+
+    // ── BUILDING RESOLUTION (Fase 2) — resolve once, reuse for total_units + finca ──
+    // Deterministic unit/finca lookups and the registry total both hang off this.
+    let buildingId: string | null = null
+    try {
+      buildingId = s.building_id || (await resolveBuildingId(phName))
+      if (buildingId) s.building_id = buildingId  // persist for /api/icr (Mano A)
+    } catch (e) {
+      console.error('Building resolution failed (non-fatal):', e)
+    }
+
+    // ── TOTAL UNITS — master rule: an exact datum that exists in the DB comes
+    // from the DB, never from the parsed document. Precedence:
+    //   1) Ivette's pre-flight override (confirmed_total_units) — manual wins
+    //   2) buildings.total_units (Registro Público, deterministic) — DB beats parse
+    //   3) parsed/skeleton s.total_units — last resort only
+    // This fixes the 254% quorum bug: Luxor 300 parsed 46, DB has 143.
+    let dbTotalUnits: number | null = null
+    if (buildingId) {
+      try { dbTotalUnits = await getBuildingTotalUnits(buildingId) }
+      catch (e) { console.error('Total-units lookup failed (non-fatal):', e) }
+    }
+    const totalUnits = preflight.confirmed_total_units ?? dbTotalUnits ?? s.total_units ?? 0
+    // Persist the resolved total back to the skeleton so every downstream
+    // consumer that reads s.total_units (actaBuilder.buildActaText → the text
+    // /api/icr Mano A audits, and runQAScan) uses the SAME corrected number.
+    if (totalUnits > 0) s.total_units = totalUnits
+    // Guardrail: if present > total, the total is wrong (bad parse / stale data).
+    // Surface as CRITICAL ICR finding instead of emitting an impossible >100% quorum.
+    if (totalUnits > 0 && presentUnits > totalUnits) {
+      icrFindings.push({
+        severity: 'CRITICAL',
+        category: 'LEGAL_COMPLIANCE',
+        location: 'Sección 1 — Verificación del Quórum',
+        issue: `Asistentes (${presentUnits}) > total de unidades (${totalUnits}): porcentaje de quórum imposible. ` +
+          `El total no proviene del Registro Público${dbTotalUnits ? '' : ' (no se pudo resolver el edificio en la base de datos)'}.`,
+        suggestion: 'Verificar el total de unidades del PH en el Registro Público y confirmarlo en el pre-flight (confirmed_total_units). No firmar hasta que asistentes ≤ total.',
+      })
+    }
 
     // ── FINCA LOOKUP (Fase 2) — deterministic unit→canonical_key→finca ────────
     // Per-unit finca (Ley 284: cada unidad lleva su finca). SQL/canonical_key
@@ -89,12 +127,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     let fincaByUnit: Record<string, string> = {}
     const fincaPendientes: string[] = []
     try {
-      const buildingId = s.building_id || (await resolveBuildingId(phName))
-      if (buildingId) {
-        // Persist so the acta_text payload carries it to /api/icr (Mano A) and
-        // future calls don't re-resolve by name.
-        s.building_id = buildingId
-      }
       if (buildingId && parsed.attendance.length > 0) {
         const enriched = await enrichAttendanceWithFincas(
           buildingId,
@@ -306,9 +338,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
           docChildren.push(normal(`${fmtVotos(vote.no_votes)} en contra`, { indent: true }))
           if (vote.abstentions) docChildren.push(normal(`${conLetras(vote.abstentions)} abstenciones`, { indent: true }))
           docChildren.push(approval(
-            vote.approved
-              ? `Se aprobó ${vote.topic} con ${fmtVotos(vote.yes_votes)}${vote.pct_yes != null ? ` que representan el ${fmtPorcentaje(vote.pct_yes)}` : ''}.`
-              : `No se aprobó ${vote.topic}. Votos en contra: ${conLetras(vote.no_votes)}.`,
+            describeVoteResult(vote, fmtVotos, fmtPorcentaje),
             vote.approved
           ))
         }
@@ -327,9 +357,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
           docChildren.push(normal(`${fmtVotos(vote.no_votes)} en contra`, { indent: true }))
           if (vote.abstentions) docChildren.push(normal(`${conLetras(vote.abstentions)} abstenciones`, { indent: true }))
           docChildren.push(approval(
-            vote.approved
-              ? `Se aprobó ${vote.topic} con ${fmtVotos(vote.yes_votes)}${vote.pct_yes != null ? ` que representan el ${fmtPorcentaje(vote.pct_yes)}` : ''}.`
-              : `No se aprobó ${vote.topic}. Votos en contra: ${conLetras(vote.no_votes)}.`,
+            describeVoteResult(vote, fmtVotos, fmtPorcentaje),
             vote.approved
           ))
         }
