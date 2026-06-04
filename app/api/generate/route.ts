@@ -11,6 +11,7 @@ import {
 } from '@/lib/generators/numeroALetras'
 import { matchVoteToSection } from '@/lib/processors/voteMatcher'
 import { resolveBuildingId, enrichAttendanceWithFincas, FINCA_PENDIENTE } from '@/lib/processors/fincaLookup'
+import { curateImages } from '@/lib/processors/imageCuration'
 export const runtime = 'nodejs'
 export const maxDuration = 120
 // ── ICR types ─────────────────────────────────────────────────────────────────
@@ -89,6 +90,11 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     const fincaPendientes: string[] = []
     try {
       const buildingId = s.building_id || (await resolveBuildingId(phName))
+      if (buildingId) {
+        // Persist so the acta_text payload carries it to /api/icr (Mano A) and
+        // future calls don't re-resolve by name.
+        s.building_id = buildingId
+      }
       if (buildingId && parsed.attendance.length > 0) {
         const enriched = await enrichAttendanceWithFincas(
           buildingId,
@@ -438,49 +444,71 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         docChildren.push(emptyLine())
       }
     }
-    // ── IMAGES APPENDIX — FPH-016 ──────────────────────────────────────────────
+    // ── IMAGES APPENDIX — Mano B (curaduría visual) ────────────────────────────
     const docImages = parsed.images || []
     if (docImages.length > 0) {
       const { ImageRun } = await import('docx')
-      docChildren.push(new Paragraph({
-        children: [new TextRun({ text: '', size: 22, font: TNR })],
-        pageBreakBefore: true, spacing: { before: 0, after: 0 },
-      }))
-      docChildren.push(new Paragraph({
-        children: [new TextRun({
-          text: 'DOCUMENTOS DE RESPALDO — IMÁGENES',
-          bold: true, underline: { type: UnderlineType.SINGLE }, size: 26, font: TNR,
-        })],
-        alignment: AlignmentType.CENTER, spacing: { before: 0, after: 120 },
-      }))
-      docChildren.push(new Paragraph({
-        children: [new TextRun({
-          text: `${docImages.length} imagen${docImages.length > 1 ? 'es' : ''} extraída${docImages.length > 1 ? 's' : ''} del paquete Hypal · Para referencia y respaldo`,
-          size: 17, font: TNR, color: '888888', italics: true,
-        })],
-        alignment: AlignmentType.CENTER, spacing: { before: 0, after: 400 },
-      }))
-      for (const img of docImages) {
+
+      // Mano B: vision decides which images belong. Non-fatal: if curation fails
+      // (curated:false), fall back to rendering all images (legacy behavior).
+      const ctxForCuration = (parsed.votations || []).map(v => `Votación: ${v.topic}`).join('; ') ||
+        `Asamblea de ${phName}`
+      const curation = await curateImages(docImages, ctxForCuration)
+
+      // Build the render list: [image, caption] pairs.
+      type RenderImg = { img: typeof docImages[number]; caption: string }
+      let toRender: RenderImg[]
+      if (curation.curated && curation.included.length >= 0 && curation.decisions.length > 0) {
+        toRender = curation.included
+          .filter(d => docImages[d.index])
+          .map(d => ({ img: docImages[d.index], caption: d.caption_legal || docImages[d.index].filename }))
+      } else {
+        // Fallback: render all with filename as caption (legacy).
+        toRender = docImages.map(img => ({ img, caption: img.filename }))
+      }
+
+      // If curation ran and decided NOTHING belongs, skip the appendix entirely.
+      if (toRender.length > 0) {
         docChildren.push(new Paragraph({
-          children: [new TextRun({ text: img.filename, size: 18, font: TNR, color: '666666', italics: true })],
-          spacing: { before: 240, after: 80 },
+          children: [new TextRun({ text: '', size: 22, font: TNR })],
+          pageBreakBefore: true, spacing: { before: 0, after: 0 },
         }))
-        try {
-          const imgBuffer = Buffer.from(img.data, 'base64')
+        docChildren.push(new Paragraph({
+          children: [new TextRun({
+            text: 'DOCUMENTOS DE RESPALDO — IMÁGENES',
+            bold: true, underline: { type: UnderlineType.SINGLE }, size: 26, font: TNR,
+          })],
+          alignment: AlignmentType.CENTER, spacing: { before: 0, after: 120 },
+        }))
+        const subtitle = curation.curated
+          ? `${toRender.length} imagen${toRender.length > 1 ? 'es' : ''} seleccionada${toRender.length > 1 ? 's' : ''} por relevancia legal${curation.excluded_count > 0 ? ` · ${curation.excluded_count} omitida${curation.excluded_count > 1 ? 's' : ''} (capturas de pantalla, avatares)` : ''}`
+          : `${toRender.length} imagen${toRender.length > 1 ? 'es' : ''} del paquete · Para referencia y respaldo`
+        docChildren.push(new Paragraph({
+          children: [new TextRun({ text: subtitle, size: 17, font: TNR, color: '888888', italics: true })],
+          alignment: AlignmentType.CENTER, spacing: { before: 0, after: 400 },
+        }))
+        for (const { img, caption } of toRender) {
           docChildren.push(new Paragraph({
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            children: [new (ImageRun as any)({
-              data: imgBuffer,
-              transformation: { width: 500, height: 360 },
-              type: img.type === 'image/png' ? 'png' : 'jpg',  // ← FPH-016 fix
-            })],
-            spacing: { before: 0, after: 200 },
+            children: [new TextRun({ text: caption, size: 18, font: TNR, color: '444444' })],
+            spacing: { before: 240, after: 80 },
           }))
-        } catch {
-          docChildren.push(new Paragraph({
-            children: [new TextRun({ text: `[Imagen no disponible: ${img.filename}]`, size: 17, font: TNR, color: '999999' })],
-            spacing: { before: 0, after: 200 },
-          }))
+          try {
+            const imgBuffer = Buffer.from(img.data, 'base64')
+            docChildren.push(new Paragraph({
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              children: [new (ImageRun as any)({
+                data: imgBuffer,
+                transformation: { width: 500, height: 360 },
+                type: img.type === 'image/png' ? 'png' : 'jpg',
+              })],
+              spacing: { before: 0, after: 200 },
+            }))
+          } catch {
+            docChildren.push(new Paragraph({
+              children: [new TextRun({ text: `[Imagen no disponible: ${img.filename}]`, size: 17, font: TNR, color: '999999' })],
+              spacing: { before: 0, after: 200 },
+            }))
+          }
         }
       }
     }
