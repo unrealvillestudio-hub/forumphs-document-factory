@@ -68,21 +68,51 @@ export default function DocumentFactoryPage() {
   const handleDataReady = async (data: ExtractedData) => {
     setStep('parsing'); setError('')
     try {
+      const payload = JSON.stringify({
+        resumen:         data.resumen,
+        transcripcion:   data.transcripcion,
+        asistencia_rows: data.asistencia_rows,
+        votaciones_rows: data.votaciones_rows,
+        chats:           data.chats,
+        images:          data.images,
+      })
+
+      // Capa 2 — payload guard. Serverless body cap is ~4.5 MB; base64 images
+      // dominate the size. The client extractor already downscales images, but
+      // if an unusually image-heavy package is still over the safe ceiling we
+      // fail with a CLEAR, actionable message instead of letting the function
+      // return a plain-text 413 that the old code blindly JSON.parse'd
+      // ("Unexpected token 'R'").
+      const SAFE_BODY_BYTES = 4 * 1024 * 1024  // 4 MB headroom under the 4.5 cap
+      const payloadBytes = new Blob([payload]).size
+      if (payloadBytes > SAFE_BODY_BYTES) {
+        const mb = (payloadBytes / (1024 * 1024)).toFixed(1)
+        throw new Error(
+          `El paquete es demasiado grande (${mb} MB) incluso tras optimizar las ` +
+          `imágenes. Probá quitando del ZIP las imágenes no esenciales (capturas ` +
+          `de logística/Hypal) y volvé a subirlo.`
+        )
+      }
+
       const res = await fetch('/api/parse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          resumen:         data.resumen,
-          transcripcion:   data.transcripcion,
-          asistencia_rows: data.asistencia_rows,
-          votaciones_rows: data.votaciones_rows,
-          chats:           data.chats,
-          images:          data.images,
-        }),
+        body: payload,
       })
-      const json = (await res.json()) as ParseResponse
-      if (!res.ok || !json.success || !json.parsed) {
-        throw new Error(json.error || `El análisis falló (HTTP ${res.status})`)
+
+      // Robust response handling: a 413 (or any infra error) comes back as plain
+      // text, not JSON. Never call res.json() blind — read text, then parse.
+      const raw = await res.text()
+      let json: ParseResponse | null = null
+      try { json = raw ? (JSON.parse(raw) as ParseResponse) : null } catch { json = null }
+      if (!res.ok || !json || !json.success || !json.parsed) {
+        if (res.status === 413) {
+          throw new Error(
+            'El servidor rechazó el paquete por tamaño (413). Quitá del ZIP las ' +
+            'imágenes no esenciales y volvé a intentarlo.'
+          )
+        }
+        throw new Error(json?.error || `El análisis falló (HTTP ${res.status})`)
       }
       setParsed(json.parsed)
       setGaps(json.preflight_gaps || [])

@@ -124,6 +124,82 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary)
 }
 
+// ── Image downscale + recompress (client-side, pre-upload) ────────────────────
+// WHY: /api/parse receives a JSON body (resumen/transcripcion text + images as
+// base64). Vercel serverless caps the request body at ~4.5 MB, and base64
+// inflates bytes ~33%. A Hypal "Resumen de Asamblea" docx with full-res Zoom
+// screenshots blows past that → 413 "Content Too Large" → the client tries to
+// JSON.parse a plain-text error → "Unexpected token 'R'". Editing images out by
+// hand in Word actually GROWS the file (Word recompresses/re-embeds), so the fix
+// belongs HERE — the earliest point, in the browser, BEFORE the bytes ever enter
+// the JSON payload. We downscale to a long edge that is more than enough for the
+// Expert Agent (Mano B) to classify INCLUDE/EXCLUDE, and re-encode as JPEG.
+//
+// Deterministic media preprocessing — NOT legal data, so the master rule doesn't
+// apply. Degrades gracefully: if canvas/bitmap isn't available (SSR, old engine),
+// we fall back to the original base64 so extraction never breaks.
+
+const MAX_IMAGE_EDGE = 1568   // px on the long side (ample for vision classification)
+const JPEG_QUALITY = 0.75
+const DOWNSCALE_MIN_BYTES = 200 * 1024  // only bother for images over ~200KB
+
+async function downscaleImageToBase64(
+  buffer: ArrayBuffer,
+  originalType: 'image/png' | 'image/jpeg',
+): Promise<{ data: string; type: 'image/png' | 'image/jpeg' }> {
+  // Small images: not worth the work, keep as-is.
+  if (buffer.byteLength < DOWNSCALE_MIN_BYTES) {
+    return { data: arrayBufferToBase64(buffer), type: originalType }
+  }
+  // Canvas/bitmap only exist in the browser. Fall back cleanly otherwise.
+  const hasBitmap = typeof createImageBitmap === 'function'
+  const hasCanvas = typeof OffscreenCanvas === 'function' ||
+    (typeof document !== 'undefined' && typeof document.createElement === 'function')
+  if (!hasBitmap || !hasCanvas) {
+    return { data: arrayBufferToBase64(buffer), type: originalType }
+  }
+  try {
+    const blob = new Blob([buffer], { type: originalType })
+    const bitmap = await createImageBitmap(blob)
+    const { width, height } = bitmap
+    const longEdge = Math.max(width, height)
+    const scale = longEdge > MAX_IMAGE_EDGE ? MAX_IMAGE_EDGE / longEdge : 1
+    const w = Math.max(1, Math.round(width * scale))
+    const h = Math.max(1, Math.round(height * scale))
+
+    // Prefer OffscreenCanvas; fall back to a DOM canvas.
+    let outBlob: Blob | null = null
+    if (typeof OffscreenCanvas === 'function') {
+      const canvas = new OffscreenCanvas(w, h)
+      const ctx = canvas.getContext('2d')
+      if (!ctx) throw new Error('no 2d ctx')
+      ctx.drawImage(bitmap, 0, 0, w, h)
+      outBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: JPEG_QUALITY })
+    } else {
+      const canvas = document.createElement('canvas')
+      canvas.width = w; canvas.height = h
+      const ctx = canvas.getContext('2d')
+      if (!ctx) throw new Error('no 2d ctx')
+      ctx.drawImage(bitmap, 0, 0, w, h)
+      outBlob = await new Promise<Blob | null>(resolve =>
+        canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY))
+    }
+    bitmap.close?.()
+    if (!outBlob) throw new Error('encode failed')
+
+    const outBuf = await outBlob.arrayBuffer()
+    // Safety: if recompression somehow produced a LARGER buffer (rare, tiny
+    // images), keep whichever is smaller.
+    if (outBuf.byteLength >= buffer.byteLength) {
+      return { data: arrayBufferToBase64(buffer), type: originalType }
+    }
+    return { data: arrayBufferToBase64(outBuf), type: 'image/jpeg' }
+  } catch {
+    // Any decode/encode failure → original bytes, never break extraction.
+    return { data: arrayBufferToBase64(buffer), type: originalType }
+  }
+}
+
 // ── DOCX text extraction via mammoth ────────────────────────────────────────
 
 async function extractDocxText(arrayBuffer: ArrayBuffer): Promise<string> {
@@ -183,10 +259,11 @@ async function extractDocxImages(
         const filename = mediaFile.name.split('/').pop() || mediaFile.name
         // Skip tiny images (icons, bullets, etc.) — less than 5KB
         if (imgBuffer.byteLength < 5120) continue
+        const { data, type } = await downscaleImageToBase64(imgBuffer, mimeFromName(filename))
         images.push({
           filename: `${sourceLabel}_${filename}`,
-          data: arrayBufferToBase64(imgBuffer),
-          type: mimeFromName(filename),
+          data,
+          type,
           source: sourceLabel,
         })
       } catch {
@@ -380,10 +457,11 @@ export async function extractZip(file: File, onProgress?: ProgressCallback): Pro
       // Standalone images at the ZIP root level
       onProgress?.(`Extrayendo imagen standalone: ${name}`, pct)
       const buf = await f.async('arraybuffer')
+      const { data, type } = await downscaleImageToBase64(buf, mimeFromName(name))
       result.images.push({
         filename: name,
-        data: arrayBufferToBase64(buf),
-        type: mimeFromName(name),
+        data,
+        type,
         source: 'standalone',
       })
 
@@ -497,10 +575,11 @@ export async function extractLooseFiles(files: File[], onProgress?: ProgressCall
     } else if (isStandaloneImage(name)) {
       onProgress?.(`Extrayendo imagen: ${name}`, pct)
       const buf = await f.arrayBuffer()
+      const { data, type } = await downscaleImageToBase64(buf, mimeFromName(name))
       result.images.push({
         filename: name,
-        data: arrayBufferToBase64(buf),
-        type: mimeFromName(name),
+        data,
+        type,
         source: 'standalone',
       })
 
