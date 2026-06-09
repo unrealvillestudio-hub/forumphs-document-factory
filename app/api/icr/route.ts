@@ -143,7 +143,11 @@ Responde SOLO con este JSON:
       findings,
     }
 
-    return NextResponse.json({ success: true, report })
+    // ✅ usage block is present in every standard /v1/messages response.
+    const icr_input_tokens  = msg.usage?.input_tokens  ?? 0
+    const icr_output_tokens = msg.usage?.output_tokens ?? 0
+
+    return NextResponse.json({ success: true, report, icr_input_tokens, icr_output_tokens })
   } catch (err) {
     console.error('ICR error:', err)
     // Return a safe fallback report instead of 500 — never block the user's download

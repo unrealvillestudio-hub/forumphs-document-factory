@@ -29,6 +29,8 @@ export interface CurationResult {
   included: ImageDecision[]              // INCLUDE + MAYBE, sorted by order
   excluded_count: number
   curated: boolean                       // false = vision failed, caller falls back
+  input_tokens: number                   // Anthropic usage — 0 if vision didn't run
+  output_tokens: number
 }
 
 const CURATION_SYSTEM = `Eres el curador visual del Agente Experto ForumPHs. Recibes las imágenes extraídas de un paquete de Asamblea de Propiedad Horizontal y decides cuáles pertenecen al acta legal.
@@ -51,7 +53,7 @@ export async function curateImages(
   images: ExtractedImage[],
   context: string,
 ): Promise<CurationResult> {
-  const empty: CurationResult = { decisions: [], included: [], excluded_count: 0, curated: false }
+  const empty: CurationResult = { decisions: [], included: [], excluded_count: 0, curated: false, input_tokens: 0, output_tokens: 0 }
   if (!images || images.length === 0) return { ...empty, curated: true }
 
   const apiKey = process.env.forumphs_document_factory || process.env.ANTHROPIC_API_KEY
@@ -100,7 +102,11 @@ export async function curateImages(
       .sort((a, b) => (a.order ?? 999) - (b.order ?? 999))
     const excluded_count = decisions.filter(d => d.decision === 'EXCLUDE').length
 
-    return { decisions, included, excluded_count, curated: true }
+    // ✅ usage block is present in every standard /v1/messages response.
+    const input_tokens  = msg.usage?.input_tokens  ?? 0
+    const output_tokens = msg.usage?.output_tokens ?? 0
+
+    return { decisions, included, excluded_count, curated: true, input_tokens, output_tokens }
   } catch (e) {
     console.error('Image curation failed (non-fatal, caller falls back):', e)
     return empty

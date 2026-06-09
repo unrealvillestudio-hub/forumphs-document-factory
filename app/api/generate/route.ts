@@ -12,6 +12,7 @@ import {
 import { matchVoteToSection, describeVoteResult } from '@/lib/processors/voteMatcher'
 import { resolveBuildingId, enrichAttendanceWithFincas, getBuildingTotalUnits, FINCA_PENDIENTE } from '@/lib/processors/fincaLookup'
 import { curateImages } from '@/lib/processors/imageCuration'
+import { logActaCost } from '@/lib/processors/costLedger'
 export const runtime = 'nodejs'
 export const maxDuration = 120
 // ── ICR types ─────────────────────────────────────────────────────────────────
@@ -48,6 +49,13 @@ function detectFirstCallNoQuorum(rawTranscription: string): boolean {
   return /primer\s+llamado|no\s+(?:se\s+)?alcanz[oó].*quór?um|segundo\s+llamado|falta.*quór?um/i.test(rawTranscription)
 }
 export async function POST(req: NextRequest): Promise<NextResponse<GenerateResponse>> {
+  // ── JOB CLOCK — starts here, measures total /api/generate wall-clock time ──
+  const jobStartMs = Date.now()
+  // crypto.randomUUID() is available in Node 18+ (Vercel runtime).
+  const jobId = typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${jobStartMs}-${Math.random().toString(36).slice(2, 9)}`
+
   try {
     const body = await req.json()
     const { parsed, preflight, formalizedBlocks }: {
@@ -58,6 +66,17 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     const icrFindings: ICRFinding[] = body.icr_findings || []
     // Re-run sweep index — relaxes QA tolerance progressively (see qaScanner)
     const attempt: number = typeof body.attempt === 'number' ? body.attempt : 0
+
+    // ── TOKEN ACCUMULATOR — sum across all Anthropic calls in this job ────────
+    // Sources:
+    //   • ef_input/output_tokens — from fphs-formalize EF response, passed by client
+    //   • vision — from curateImages() below (captured inline)
+    //   • icr_input/output_tokens — from /api/icr response, passed by client on
+    //     second-pass calls that include icr_findings
+    let totalInputTokens  = (typeof body.ef_input_tokens  === 'number' ? body.ef_input_tokens  : 0)
+                          + (typeof body.icr_input_tokens  === 'number' ? body.icr_input_tokens  : 0)
+    let totalOutputTokens = (typeof body.ef_output_tokens === 'number' ? body.ef_output_tokens : 0)
+                          + (typeof body.icr_output_tokens === 'number' ? body.icr_output_tokens : 0)
     const {
       Document, Paragraph, TextRun, Table, TableRow, TableCell,
       AlignmentType, WidthType, BorderStyle, Packer, UnderlineType, Footer,
@@ -143,12 +162,16 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     }
     // Surface pendientes as ICR findings (one consolidated warning).
     if (fincaPendientes.length > 0) {
+      const n    = fincaPendientes.length
+      const lista = fincaPendientes.slice(0, 15).join(', ') + (n > 15 ? '…' : '')
       icrFindings.push({
         severity: 'MEDIUM',
         category: 'DATA_MISMATCH',
-        location: 'Sección 1 — Lista de asistentes',
-        issue: `${fincaPendientes.length} unidad(es) sin finca resuelta: ${fincaPendientes.slice(0, 15).join(', ')}${fincaPendientes.length > 15 ? '…' : ''}.`,
-        suggestion: 'Completar la finca de estas unidades en la base de datos (units.finca) o verificar el código de unidad. La normalización no encontró coincidencia.',
+        location: 'Sección 1 — Tabla de asistencia',
+        issue: `${n} unidad(es) presentes sin número de finca registrado: ${lista}. ` +
+          `Verificar si están inscritas en el Registro Público o si falta cargarlas en la base.`,
+        suggestion: 'Completar la finca de estas unidades en la base, o confirmar que ' +
+          'no tienen finca propia (p. ej. locales no inscritos individualmente).',
       })
     }
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -482,6 +505,9 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       const ctxForCuration = (parsed.votations || []).map(v => `Votación: ${v.topic}`).join('; ') ||
         `Asamblea de ${phName}`
       const curation = await curateImages(docImages, ctxForCuration)
+      // ✅ curateImages returns usage from the standard /v1/messages block.
+      totalInputTokens  += curation.input_tokens
+      totalOutputTokens += curation.output_tokens
 
       // Build the render list: [image, caption] pairs.
       type RenderImg = { img: typeof docImages[number]; caption: string }
@@ -565,6 +591,18 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     const annotatedSuffix = icrFindings.length > 0 ? '_ICR' : ''
     const filename  = `ACTA_${typeCode}_${actaNum}-${year}_${slug}_df_v1${annotatedSuffix}.docx`
     const wordCount = actaText.split(/\s+/).length
+
+    // ── COST LEDGER — ONE row per acta, fire-and-forget (non-fatal) ───────────
+    // logActaCost logs its own errors; we do not await in the critical path.
+    void logActaCost({
+      jobId,
+      building: phName,
+      actaNo:   actaNum,
+      inputTokens:  totalInputTokens,
+      outputTokens: totalOutputTokens,
+      durationMs: Date.now() - jobStartMs,
+    })
+
     return NextResponse.json({ success: true, docx_base64: base64, filename, word_count: wordCount, qa_report, acta_text: actaText })
   } catch (err: unknown) {
     console.error('Generate error:', err)

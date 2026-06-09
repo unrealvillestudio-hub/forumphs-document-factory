@@ -94,7 +94,10 @@ function logTokensBatch(inputTokens: number, outputTokens: number, blockCount: n
       'Prefer': 'return=minimal',
     },
     body: JSON.stringify({
-      session_type: 'edge_function',
+      // session_type='ef_partial' marks this as the EF-internal sub-count.
+      // /api/generate writes the consolidated 'document_factory' row that
+      // includes formalize + vision + ICR — exclude 'ef_partial' from billing.
+      session_type: 'ef_partial',
       model_id: 'claude-sonnet-4-6',
       brand_id: 'ForumPHs',
       lab: 'document-factory',
@@ -213,6 +216,10 @@ Deno.serve(async (req: Request) => {
       total_formalized: r.filter((b: Record<string, unknown>) => b && b.text_formal && !b.skip).length,
       total_skipped: r.filter((b: Record<string, unknown>) => b && b.skip).length,
       total_fallback: r.filter((b: Record<string, unknown>) => b && b.skip_reason === 'fallback').length,
+      // Expose token counts so /api/generate can include them in the
+      // consolidated cost-ledger row (session_type='document_factory').
+      total_input_tokens: totalInputTokens,
+      total_output_tokens: totalOutputTokens,
     }), { headers: { ...C, 'Content-Type': 'application/json' } });
 
   } catch (e) {
