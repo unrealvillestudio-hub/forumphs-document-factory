@@ -21,13 +21,17 @@ export interface AdminPerson {
 
 async function db(table: string, params: string): Promise<unknown[] | null> {
   if (!FPHS_URL || !FPHS_KEY) return null
-  const res = await fetch(`${FPHS_URL}/rest/v1/${table}?${params}`, {
-    headers: { apikey: FPHS_KEY, Authorization: `Bearer ${FPHS_KEY}`, 'Content-Type': 'application/json' },
-    cache: 'no-store',
-  })
-  if (!res.ok) return null
-  const text = await res.text()
-  return text ? JSON.parse(text) : null
+  try {
+    const res = await fetch(`${FPHS_URL}/rest/v1/${table}?${params}`, {
+      headers: { apikey: FPHS_KEY, Authorization: `Bearer ${FPHS_KEY}`, 'Content-Type': 'application/json' },
+      cache: 'no-store',
+    })
+    if (!res.ok) return null
+    const text = await res.text()
+    return text ? JSON.parse(text) : null
+  } catch {
+    return null  // network error → loadAdminPersonnel uses hardcoded fallback; ICR audit still runs
+  }
 }
 
 /**

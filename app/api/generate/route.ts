@@ -84,11 +84,17 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     // ── BUILDING RESOLUTION (Fase 2) — resolve once, reuse for total_units + finca ──
     // Deterministic unit/finca lookups and the registry total both hang off this.
     let buildingId: string | null = null
+    let dbNetworkError = false
     try {
       buildingId = s.building_id || (await resolveBuildingId(phName))
       if (buildingId) s.building_id = buildingId  // persist for /api/icr (Mano A)
     } catch (e) {
-      console.error('Building resolution failed (non-fatal):', e)
+      if (e instanceof Error && e.message === 'FPHS_DB_NETWORK_ERROR') {
+        dbNetworkError = true
+        console.error('Building resolution failed — FPHS DB network error (non-fatal)')
+      } else {
+        console.error('Building resolution failed (non-fatal):', e)
+      }
     }
 
     // ── TOTAL UNITS — master rule: an exact datum that exists in the DB comes
@@ -198,6 +204,17 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
           suggestion: 'Revisar cada caso y fijar "El señor" o "La señora" según corresponda.',
         })
       }
+    }
+    // DB connection warning — must be visible: acta generated without DB validation.
+    // Distinguishes "DB caída" (network error) from "dato ausente" ([FINCA PENDIENTE] normal).
+    if (dbNetworkError) {
+      icrFindings.push({
+        severity: 'HIGH',
+        category: 'DATA_MISMATCH',
+        location: 'Generación del documento',
+        issue: 'No se pudo conectar a la base de datos FPHS; las fincas y los datos del edificio NO fueron verificados. Este acta se generó sin validación de DB — revisar antes de firmar.',
+        suggestion: 'Verificar que la base de datos FPHS esté activa (puede estar auto-pausada en Supabase) y volver a generar el documento. Hasta entonces, todas las fincas muestran [FINCA PENDIENTE].',
+      })
     }
     // ── Helpers ──────────────────────────────────────────────────────────────
     const TNR = 'Times New Roman'
@@ -381,14 +398,16 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         const sectionVotes = votesBySectionMap.get(item.number) || []
         for (const vote of sectionVotes) {
           renderedVotes.add(vote)
-          docChildren.push(normal(`Se sometió a votación ${vote.topic}. Los resultados fueron los siguientes:`))
-          docChildren.push(normal(`${fmtVotos(vote.yes_votes)} a favor`, { indent: true }))
-          docChildren.push(normal(`${fmtVotos(vote.no_votes)} en contra`, { indent: true }))
-          if (vote.abstentions) docChildren.push(normal(`${conLetras(vote.abstentions)} abstenciones`, { indent: true }))
-          docChildren.push(approval(
-            describeVoteResult(vote, fmtVotos, fmtPorcentaje),
-            vote.approved
-          ))
+          if (vote.candidate_election) {
+            docChildren.push(normal(`Se efectuó votación sobre: ${vote.topic}`))
+            docChildren.push(normal('[ELECCIÓN MULTI-CANDIDATO — PENDIENTE DE PROCESAR]', { bold: true, indent: true }))
+          } else {
+            docChildren.push(normal(`Se sometió a votación ${vote.topic}. Los resultados fueron los siguientes:`))
+            docChildren.push(normal(`${fmtVotos(vote.yes_votes)} a favor`, { indent: true }))
+            docChildren.push(normal(`${fmtVotos(vote.no_votes)} en contra`, { indent: true }))
+            if (vote.abstentions) docChildren.push(normal(`${conLetras(vote.abstentions)} abstenciones`, { indent: true }))
+            docChildren.push(approval(describeVoteResult(vote, fmtVotos, fmtPorcentaje), vote.approved))
+          }
         }
         docChildren.push(emptyLine())
       }
@@ -400,14 +419,16 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         docChildren.push(sectionTitle(undefined, 'OTRAS VOTACIONES'))
         for (const vote of orphanVotes) {
           renderedVotes.add(vote)
-          docChildren.push(normal(`Se sometió a votación ${vote.topic}. Los resultados fueron los siguientes:`))
-          docChildren.push(normal(`${fmtVotos(vote.yes_votes)} a favor`, { indent: true }))
-          docChildren.push(normal(`${fmtVotos(vote.no_votes)} en contra`, { indent: true }))
-          if (vote.abstentions) docChildren.push(normal(`${conLetras(vote.abstentions)} abstenciones`, { indent: true }))
-          docChildren.push(approval(
-            describeVoteResult(vote, fmtVotos, fmtPorcentaje),
-            vote.approved
-          ))
+          if (vote.candidate_election) {
+            docChildren.push(normal(`Se efectuó votación sobre: ${vote.topic}`))
+            docChildren.push(normal('[ELECCIÓN MULTI-CANDIDATO — PENDIENTE DE PROCESAR]', { bold: true, indent: true }))
+          } else {
+            docChildren.push(normal(`Se sometió a votación ${vote.topic}. Los resultados fueron los siguientes:`))
+            docChildren.push(normal(`${fmtVotos(vote.yes_votes)} a favor`, { indent: true }))
+            docChildren.push(normal(`${fmtVotos(vote.no_votes)} en contra`, { indent: true }))
+            if (vote.abstentions) docChildren.push(normal(`${conLetras(vote.abstentions)} abstenciones`, { indent: true }))
+            docChildren.push(approval(describeVoteResult(vote, fmtVotos, fmtPorcentaje), vote.approved))
+          }
         }
         docChildren.push(emptyLine())
       }
@@ -421,16 +442,21 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         if (block.text_formal) docChildren.push(normal(block.text_formal, { before: 200 }))
       }
       for (const vote of parsed.votations) {
-        docChildren.push(normal(`Se sometió a votación ${vote.topic}. Los resultados fueron:`))
-        docChildren.push(normal(`${fmtVotos(vote.yes_votes)} a favor`, { indent: true }))
-        docChildren.push(normal(`${fmtVotos(vote.no_votes)} en contra`, { indent: true }))
-        if (vote.abstentions) docChildren.push(normal(`${conLetras(vote.abstentions)} abstenciones`, { indent: true }))
-        docChildren.push(approval(
-          vote.approved
-            ? `Se aprobó con ${fmtVotos(vote.yes_votes)}${vote.pct_yes != null ? ` (${fmtPorcentaje(vote.pct_yes)})` : ''}.`
-            : `No se aprobó.`,
-          vote.approved
-        ))
+        if (vote.candidate_election) {
+          docChildren.push(normal(`Se efectuó votación sobre: ${vote.topic}`))
+          docChildren.push(normal('[ELECCIÓN MULTI-CANDIDATO — PENDIENTE DE PROCESAR]', { bold: true, indent: true }))
+        } else {
+          docChildren.push(normal(`Se sometió a votación ${vote.topic}. Los resultados fueron:`))
+          docChildren.push(normal(`${fmtVotos(vote.yes_votes)} a favor`, { indent: true }))
+          docChildren.push(normal(`${fmtVotos(vote.no_votes)} en contra`, { indent: true }))
+          if (vote.abstentions) docChildren.push(normal(`${conLetras(vote.abstentions)} abstenciones`, { indent: true }))
+          docChildren.push(approval(
+            vote.approved
+              ? `Se aprobó con ${fmtVotos(vote.yes_votes)}${vote.pct_yes != null ? ` (${fmtPorcentaje(vote.pct_yes)})` : ''}.`
+              : `No se aprobó.`,
+            vote.approved
+          ))
+        }
       }
     }
     // ── CLOSING ───────────────────────────────────────────────────────────────

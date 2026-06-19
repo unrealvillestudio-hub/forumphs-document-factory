@@ -103,8 +103,8 @@ export function parseAsistencia(rows: Record<string, unknown>[]): AttendanceReco
 function classifyVote(raw: unknown): 'yes' | 'no' | 'abstain' | null {
   const v = String(raw ?? '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/[.,;:]+$/, '').trim()
   if (!v || v.length > 25) return null
-  if (/^(s[íi]|s[íi] apruebo|a favor|afavor|favor|aprobad[oa]|apruebo|aprueba|afirmativ[oa]|de acuerdo)$/.test(v)) return 'yes'
-  if (/^(no|no apruebo|en contra|contra|rechazad[oa]|negativ[oa]|desaprob[a-z]*)$/.test(v)) return 'no'
+  if (/^(s[íi]|si aprueba|s[íi] aprueba|s[íi] apruebo|a favor|afavor|favor|aprobad[oa]|apruebo|aprueba|afirmativ[oa]|de acuerdo)$/.test(v)) return 'yes'
+  if (/^(no|no aprueba|no apruebo|en contra|contra|rechazad[oa]|negativ[oa]|desaprob[a-z]*)$/.test(v)) return 'no'
   if (/^(abstenci[oó]n|abstencion|abstenid[oa]|abstien[a-z]*|en blanco|blanco|nul[oa])$/.test(v)) return 'abstain'
   return null
 }
@@ -126,24 +126,33 @@ function tallyBlock(sheetTopic: string, rows: Record<string, unknown>[]): Votati
   if (!topic) topic = (sheetTopic || firstKey).trim()
   if (!topic) return null
 
-  // ── Legacy summary rows: __EMPTY_2 = Si/No, __EMPTY_3 = count, __EMPTY_4 = pct ──
+  // ── Dynamic summary row scan ───────────────────────────────────────────────
+  // Finds vote label in any __EMPTY_N column, reads count from __EMPTY_N+1.
+  // Handles both legacy (label in __EMPTY_2) and Venezia (label in __EMPTY_3)
+  // without hardcoding the offset. Safe against per-vote rows: their adjacent
+  // cells are empty so Number("") = 0 fails the > 0 guard.
   let summaryYes: number | null = null
   let summaryNo: number | null = null
   let summaryPct: number | null = null
   for (const row of rows) {
-    const label = String(row['__EMPTY_2'] || '').trim().toLowerCase()
-    const cnt = row['__EMPTY_3']
-    const pctv = row['__EMPTY_4']
-    if ((label === 'si' || label === 'sí') && cnt !== '' && cnt !== undefined) {
-      const n = Number(cnt)
+    for (const k of Object.keys(row)) {
+      if (!k.startsWith('__EMPTY_')) continue
+      const vote = classifyVote(row[k])
+      if (vote !== 'yes' && vote !== 'no') continue
+      const keyNum = parseInt(k.slice('__EMPTY_'.length), 10)
+      if (isNaN(keyNum)) continue
+      const cnt = row[`__EMPTY_${keyNum + 1}`]
+      const n = cnt !== '' && cnt !== undefined ? Number(cnt) : NaN
       if (!isNaN(n) && n > 0) {
-        summaryYes = n
-        if (pctv !== '' && pctv !== undefined) summaryPct = Math.round(Number(pctv) * 10000) / 100
+        if (vote === 'yes') {
+          summaryYes = n
+          const pctv = row[`__EMPTY_${keyNum + 2}`]
+          if (pctv !== '' && pctv !== undefined && !isNaN(Number(pctv)))
+            summaryPct = Math.round(Number(pctv) * 10000) / 100
+        } else {
+          summaryNo = n
+        }
       }
-    }
-    if (label === 'no' && cnt !== '' && cnt !== undefined) {
-      const n = Number(cnt)
-      if (!isNaN(n)) summaryNo = n
     }
   }
 
@@ -169,6 +178,30 @@ function tallyBlock(sheetTopic: string, rows: Record<string, unknown>[]): Votati
       if (v === 'yes') yes++
       else if (v === 'no') no++
       else if (v === 'abstain') abstain++
+    }
+  }
+
+  // ── Multi-candidate election detection (F5-placeholder) ─────────────────────
+  // When no binary vote column was detected and the summary scan also failed,
+  // check if any __EMPTY_* column has non-trivial string values (candidate names).
+  // If so, this is a multi-candidate election — don't emit a false "0/0 → NO APROBADO".
+  if (!voteKey && summaryYes === null) {
+    const hasCandidateContent = rows.some(r =>
+      Object.keys(r).some(k => {
+        if (!k.startsWith('__EMPTY_')) return false
+        const s = String(r[k] ?? '').trim()
+        return s.length > 5 && s.length <= 80
+      })
+    )
+    if (hasCandidateContent) {
+      return {
+        topic,
+        yes_votes: 0,
+        no_votes: 0,
+        pct_yes: 0,
+        approved: false,
+        candidate_election: true,
+      }
     }
   }
 
