@@ -102,6 +102,32 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       console.error('Reprocess pendientes failed (non-fatal):', e)
     }
 
+    // ── GAP 5: deterministic role classification ─────────────────────────────
+    // Cross each speaker against the acta roster (by UNIT) and acta_admin_personnel
+    // (EXACT name/alias). Never guess by name. Anything unresolved is NOT asserted
+    // as a role — it's marked [ROL NO VERIFICADO] + flagged for Ivette. Runs BEFORE
+    // gender consolidation so reclassified owners get their treatment and
+    // admins/unverified are excluded from it.
+    try {
+      const { classifyRoles } = await import('@/lib/processors/classifyRoles')
+      const rc = await classifyRoles(workingBlocks, parsed.attendance, s.building_id)
+      workingBlocks = rc.blocks
+      for (const sev of ['HIGH', 'MEDIUM'] as const) {
+        const group = rc.unverified.filter(u => u.severity === sev)
+        if (group.length === 0) continue
+        const names = [...new Set(group.map(u => u.name))]
+        icrFindings.push({
+          severity: sev,
+          category: 'ROLE_ERROR',
+          location: 'Cuerpo del acta — intervenciones',
+          issue: `${names.length} interviniente(s) con rol no verificado (${sev === 'HIGH' ? 'parece persona real no catalogada' : 'posible error de transcripción'}): ${names.join(', ')}. No se cruzó por unidad con el padrón ni coincide exacto con el personal de administración.`,
+          suggestion: 'Decidir por cada caso: catalogar como administración (acta_admin_personnel), corregir la transcripción, o identificar la unidad del propietario. El sistema no asignó rol para no adivinar.',
+        })
+      }
+    } catch (e) {
+      console.error('Role classification failed (non-fatal):', e)
+    }
+
     // ── GAP 3: consolidate gender per person ─────────────────────────────────
     // The EF resolves gender per-block (local context), so a person can oscillate
     // "la señora"/"el señor". Resolve it once per person from all their blocks'
