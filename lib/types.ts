@@ -55,6 +55,7 @@ export interface VotationRecord {
   pct_yes?: number
   approved: boolean
   raw?: string
+  candidate_election?: boolean  // multi-candidate election — vote counts meaningless
 }
 
 export interface DebateBlock {

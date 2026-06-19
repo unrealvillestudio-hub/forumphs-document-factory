@@ -45,13 +45,20 @@ interface FincaResolution {
 
 async function db(table: string, params: string): Promise<unknown[] | null> {
   if (!FPHS_URL || !FPHS_KEY) return null
-  const res = await fetch(`${FPHS_URL}/rest/v1/${table}?${params}`, {
-    headers: { apikey: FPHS_KEY, Authorization: `Bearer ${FPHS_KEY}`, 'Content-Type': 'application/json' },
-    cache: 'no-store',
-  })
-  if (!res.ok) return null
-  const text = await res.text()
-  return text ? JSON.parse(text) : null
+  try {
+    const res = await fetch(`${FPHS_URL}/rest/v1/${table}?${params}`, {
+      headers: { apikey: FPHS_KEY, Authorization: `Bearer ${FPHS_KEY}`, 'Content-Type': 'application/json' },
+      cache: 'no-store',
+    })
+    if (!res.ok) return null
+    const text = await res.text()
+    return text ? JSON.parse(text) : null
+  } catch {
+    // Network-level failure (DB paused, DNS error, etc.) — throw a tagged error
+    // so the generate route can distinguish "configured but unreachable" from
+    // "not configured" (env vars missing) and surface a visible ICR warning.
+    throw new Error('FPHS_DB_NETWORK_ERROR')
+  }
 }
 
 /**
