@@ -78,7 +78,54 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     const timeEnd      = preflight.confirmed_time_end || s.time_end || '[HORA FIN]'
     const dateStr      = preflight.confirmed_date_str   || s.date_str   || '[FECHA PENDIENTE]'
     const timeStart    = preflight.confirmed_time_start || s.time_start || '[HORA INICIO PENDIENTE]'
-    const assignedBlocks       = assignBlocksToSections(formalizedBlocks, s.agenda_items)
+    // ── GAP 2: reprocess pending blocks ──────────────────────────────────────
+    // The EF supports forced re-sweeps (retry_attempt≥1) but /api/generate only
+    // ran attempt 0. Re-invoke it for the blocks left pending (fallback/template
+    // or carrying "[PENDIENTE DE FORMALIZACION]") so the marker never ships on a
+    // first pass. Noise discards (claude_null/logistica/empty) are NOT reprocessed.
+    let workingBlocks: DebateBlock[] = formalizedBlocks
+    try {
+      const { reprocessPendingBlocks } = await import('@/lib/processors/reprocessPending')
+      const rp = await reprocessPendingBlocks(formalizedBlocks)
+      workingBlocks = rp.blocks
+      if (rp.stillPending.length > 0) {
+        const names = [...new Set(rp.stillPending.map(b => b.speaker_name).filter(Boolean))]
+        icrFindings.push({
+          severity: 'MEDIUM',
+          category: 'NARRATIVE_QUALITY',
+          location: 'Desarrollo de la asamblea',
+          issue: `${rp.stillPending.length} intervención(es) no pudieron formalizarse automáticamente tras reproceso: ${names.join(', ')}.`,
+          suggestion: 'Revisar manualmente estas intervenciones contra la grabación y completarlas en el acta.',
+        })
+      }
+    } catch (e) {
+      console.error('Reprocess pendientes failed (non-fatal):', e)
+    }
+
+    // ── GAP 3: consolidate gender per person ─────────────────────────────────
+    // The EF resolves gender per-block (local context), so a person can oscillate
+    // "la señora"/"el señor". Resolve it once per person from all their blocks'
+    // aggregated evidence and apply one form throughout. Indeterminate → uniform
+    // dual + MEDIUM warning. Admin/abogado excluded (no señora/señor treatment).
+    try {
+      const { consolidateGender } = await import('@/lib/processors/genderConsolidation')
+      const gc = consolidateGender(workingBlocks)
+      workingBlocks = gc.blocks
+      if (gc.indeterminate.length > 0) {
+        const names = [...new Set(gc.indeterminate)]
+        icrFindings.push({
+          severity: 'MEDIUM',
+          category: 'NARRATIVE_QUALITY',
+          location: 'Desarrollo de la asamblea',
+          issue: `Género no determinado para ${names.length} interviniente(s): ${names.join(', ')}. Se mantuvo la forma "La señora/El señor".`,
+          suggestion: 'Confirmar el género de estas personas y unificar el tratamiento en el acta.',
+        })
+      }
+    } catch (e) {
+      console.error('Gender consolidation failed (non-fatal):', e)
+    }
+
+    const assignedBlocks       = assignBlocksToSections(workingBlocks, s.agenda_items)
     const hasFirstCallNoQuorum = detectFirstCallNoQuorum(parsed.raw_files['transcripcion'] || '')
 
     // ── BUILDING RESOLUTION (Fase 2) — resolve once, reuse for total_units + finca ──
