@@ -9,7 +9,7 @@ const LOGISTICA_NAMES = /daniel\s*puentes|daniel\s+p\b|hypal|hipal|moderador\s+v
 const BOLD_RULE = `FORMATO DE IDENTIFICACIÓN DE INTERVINIENTES (regla obligatoria):
 
 1. ADMINISTRACIÓN: Formato: "**[Nombre]**, en representación de la administración," NUNCA uses artículo antes del nombre.
-2. PROPIETARIO/A: Formato: "La señora/El señor **[Nombre completo], propietaria/o de la unidad inmobiliaria [unidad]**,"
+2. PROPIETARIO/A: Formato: "[TRATAMIENTO] **[Nombre completo], propietaria/o de la unidad inmobiliaria [unidad]**,". Para [TRATAMIENTO], DETERMINA el género del interviniente leyendo las marcas gramaticales del texto: artículos y tratamientos ("la propietaria", "doña", "el señor", "don"), y concordancias de adjetivos/participios referidos a la persona ("preocupada", "representado"). Si el texto indica género femenino usa "La señora"; si indica masculino usa "El señor". SOLO si el texto no ofrece ninguna señal de género, usa exactamente "La señora/El señor" (con la barra), que será revisado. Ajusta también "propietaria/o" al género determinado (propietaria / propietario).
 3. JUNTA DIRECTIVA: Usa SOLO el cargo sin nombre propio, sin negrita.
 
 NO uses ningún otro formato markdown. NUNCA repitas el nombre si ya apareció en el mismo párrafo.`;
@@ -64,10 +64,10 @@ function speakerPrefix(b: Record<string, string>): string {
 }
 
 // templateFormalize — deterministic third-person frame when the model is not
-// used (attempt >= 3). Keeps the original wording as a recorded quote.
+// used (attempt >= 3). Uses a neutral placeholder (never the raw text) so QA/ICR
+// can target these for reproceso without leaking oral transcript into the acta.
 function templateFormalize(b: Record<string, string>) {
-  const text = (b.text_cleaned || b.text_raw || '').trim().substring(0, 300);
-  return `${speakerPrefix(b)} intervino en la asamblea: "${text}".`;
+  return `${speakerPrefix(b)} realizó una intervención sobre el tema en discusión. [PENDIENTE DE FORMALIZACION — revisar en reproceso]`;
 }
 
 // FIX #3 — fallbackFormalize: used ONLY when the API call FAILS (network/5xx).
@@ -136,7 +136,9 @@ Deno.serve(async (req: Request) => {
     // loosens FORMALIZATION (what gets through); the QA evaluation GATE in
     // qaScanner stays honest, so Ivette's score is not inflated.
     const minLen = 2;
-    const forceInclude = true;
+    // attempt 0: respeta el NULL del modelo (descarta ruido genuino).
+    // attempt >= 1: fuerza inclusión para recuperar lo que pudo haberse omitido.
+    const forceInclude = attempt >= 1;
     const useTemplate = attempt >= 3;
 
     const r = new Array(blocks.length);
