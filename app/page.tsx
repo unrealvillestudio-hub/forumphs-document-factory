@@ -226,6 +226,45 @@ export default function DocumentFactoryPage() {
     URL.revokeObjectURL(url)
   }
 
+  // ── ICR report download (.docx) — serialize the structured findings ──────
+  const [icrDocxLoading, setIcrDocxLoading] = useState(false)
+  const downloadICRReport = async () => {
+    if (!icrReport || !parsed) return
+    setIcrDocxLoading(true)
+    try {
+      const res = await fetch('/api/icr-docx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          report: icrReport,
+          ph_name: parsed.skeleton.ph_name,
+          acta_number: parsed.skeleton.acta_number,
+          assembly_type: parsed.skeleton.assembly_type,
+          date_str: parsed.skeleton.date_str,
+        }),
+      })
+      const json = (await res.json()) as { success: boolean; docx_base64?: string; filename?: string; error?: string }
+      if (!json.success || !json.docx_base64 || !json.filename) {
+        setError(json.error || 'No se pudo generar el reporte ICR'); return
+      }
+      const chars = atob(json.docx_base64)
+      const bytes = new Uint8Array(chars.length)
+      for (let i = 0; i < chars.length; i++) bytes[i] = chars.charCodeAt(i)
+      const blob = new Blob([bytes], {
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = json.filename
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al generar el reporte ICR')
+    } finally {
+      setIcrDocxLoading(false)
+    }
+  }
+
   const reset = () => {
     setStep('upload'); setParsed(null); setGaps([]); setPreflight(null)
     setIcrReport(null); setIcrLoading(false)
@@ -323,6 +362,11 @@ export default function DocumentFactoryPage() {
               <button className="df-btn-primary" onClick={downloadDocx} style={{ padding: '12px 28px', fontSize: 15 }}>
                 ⬇ Descargar DOCX
               </button>
+              {icrReport && !icrLoading && (
+                <button className="df-btn-ghost" onClick={downloadICRReport} disabled={icrDocxLoading} style={{ padding: '12px 24px', fontSize: 15 }}>
+                  {icrDocxLoading ? '⏳ Generando…' : '⬇ Descargar reporte ICR (.docx)'}
+                </button>
+              )}
               <button className="df-btn-ghost" onClick={() => setStep('qa')}>← Volver al QA</button>
               <button className="df-btn-ghost" onClick={reset}>Nueva acta</button>
             </div>
