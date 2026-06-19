@@ -151,6 +151,54 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         suggestion: 'Completar la finca de estas unidades en la base de datos (units.finca) o verificar el código de unidad. La normalización no encontró coincidencia.',
       })
     }
+    // ── FIX 5 — Finca length anomaly (modal-based, no hardcoded digit count) ───
+    // Computes the most-frequent finca length for this building and flags deviations.
+    // Never auto-corrects: the Registro Público is Ivette's source of truth.
+    {
+      const resolvedEntries = Object.entries(fincaByUnit)
+      if (resolvedEntries.length >= 5) {
+        const freqMap = new Map<number, number>()
+        for (const [, f] of resolvedEntries) freqMap.set(f.length, (freqMap.get(f.length) ?? 0) + 1)
+        const modalLen = [...freqMap.entries()].sort((a, b) => b[1] - a[1])[0][0]
+        const anomalas = resolvedEntries.filter(([, f]) => f.length !== modalLen)
+        if (anomalas.length > 0) {
+          icrFindings.push({
+            severity: 'MEDIUM',
+            category: 'DATA_MISMATCH',
+            location: 'Sección 1 — Tabla de asistencia (fincas)',
+            issue: `${anomalas.length} finca(s) con longitud atípica respecto al formato usual de este PH (${modalLen} dígitos): ${anomalas.map(([u, f]) => `${u} → ${f} (${f.length} díg.)`).join('; ')}.`,
+            suggestion: 'Verificar contra el Registro Público y corregir si aplica. No auto-corregido.',
+          })
+        }
+      }
+    }
+    // ── FIX 4 — Gender unresolved warning (dual "La señora/El señor") ──────────
+    // After FIX 3 (model reads context), any remaining dual indicates no gender
+    // signal was available. Surface once so Ivette can fix manually.
+    {
+      const dualRe = /La señora\/El señor \*\*([^,*\n]+)/g
+      const dualNames = new Set<string>()
+      let totalDual = 0
+      for (const block of formalizedBlocks) {
+        if (!block.text_formal) continue
+        let m
+        const re = /La señora\/El señor \*\*([^,*\n]+)/g
+        while ((m = re.exec(block.text_formal)) !== null) {
+          dualNames.add(m[1].trim())
+          totalDual++
+        }
+      }
+      void dualRe
+      if (dualNames.size > 0) {
+        icrFindings.push({
+          severity: 'MEDIUM',
+          category: 'DATA_MISMATCH',
+          location: 'Cuerpo del acta — intervenciones',
+          issue: `${totalDual} intervención(es) con tratamiento sin resolver ("La señora/El señor"): el texto no ofreció señal de género. Intervinientes: ${[...dualNames].join(', ')}.`,
+          suggestion: 'Revisar cada caso y fijar "El señor" o "La señora" según corresponda.',
+        })
+      }
+    }
     // ── Helpers ──────────────────────────────────────────────────────────────
     const TNR = 'Times New Roman'
     function mdRuns(text: string, size = 22, italic = false) {
