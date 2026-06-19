@@ -12,49 +12,85 @@
 
 import type { AttendanceRecord, VotationRecord } from '../types'
 
+// ── Header-tolerant column lookup ───────────────────────────────────────────
+// Hypal/Zoom exports vary the exact header text per PH ("Unidad" vs "Unidades",
+// "Asistencia" vs "Asistente", "Número"…). Matching exact literals is brittle —
+// it broke ingesta three times (torre, votaciones, and the Venezia quórum-0).
+// We normalize each header (trim + lowercase + strip accents) and match by
+// stem/inclusion, so a new header variant resolves WITHOUT a code change. The
+// stems are a superset of the old exact literals, so previously-working PHs
+// (Castilla, Lefevre…) keep matching.
+function normHeader(s: string): string {
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
+}
+
+// First NON-EMPTY value among columns whose normalized header matches `pred`.
+// Preserves the old `row['A'] || row['B'] || …` "first non-empty wins" behavior.
+function pickField(row: Record<string, unknown>, pred: (nk: string) => boolean): string {
+  for (const k of Object.keys(row)) {
+    if (!pred(normHeader(k))) continue
+    const v = row[k]
+    if (v !== null && v !== undefined && String(v).trim() !== '') return String(v).trim()
+  }
+  return ''
+}
+
+const isUnitHeader   = (nk: string) => nk.startsWith('unidad') || nk.startsWith('unit') || nk.startsWith('numero') || nk.startsWith('apartamento') || nk.startsWith('apto')
+const isOwnerHeader  = (nk: string) => nk.startsWith('participante') || nk.startsWith('propietario') || nk.startsWith('nombre') || nk.startsWith('owner')
+const isRepHeader    = (nk: string) => nk.startsWith('representado') || nk.startsWith('representante') || nk.startsWith('representative') || nk.startsWith('apoderad')
+const isStatusHeader = (nk: string) => nk.includes('asist') || nk.includes('estado')
+
+// ── Tower suffix extraction ─────────────────────────────────────────────────
+// Some PHs encode the tower as a suffix inside the unit cell: "10A TA" (Torre A),
+// "9H TB" (Torre B), and for commercial units "Local 1 TA" / "2 TB".
+// We ALWAYS capture the tower (→ AttendanceRecord.tower, used by the acta table
+// and by buildings whose normalization is tower-aware). We only STRIP the suffix
+// from RESIDENTIAL codes ("10A TA" → "10A") so the per-letter normalization rules
+// match. For locales the raw string is PRESERVED, because their DB rules
+// (e.g. `^(?:Local\s*)?\d+\s+T(?<unit>[AB])$`) need the suffix to derive the tower.
+function splitUnitTower(raw: string): { unit: string; tower?: string } {
+  const m = raw.match(/^(.+?)\s+T([A-H])$/i)
+  if (!m) return { unit: raw }
+  const tower = m[2].toUpperCase()
+  const stripped = m[1].trim()
+  if (/^\d{1,2}[A-H]$/i.test(stripped)) return { unit: stripped, tower }
+  return { unit: raw, tower }   // local: keep raw string for the locale rules
+}
+
 export function parseAsistencia(rows: Record<string, unknown>[]): AttendanceRecord[] {
   const records: AttendanceRecord[] = []
 
   for (const row of rows) {
-    // Unit code. Hypal: 'Unidad'. Luxor: 'Número' (e.g. 'T3 07D').
-    const unit =
-      String(row['Unidad'] || row['UNIDAD'] || row['unidad'] ||
-             row['Número'] || row['NUMERO'] || row['Numero'] ||
-             row['Apartamento'] || row['Unit'] || row['APARTAMENTO'] || '').trim()
-
-    const owner =
-      String(row['Participante'] || row['PARTICIPANTE'] ||
-             row['Propietario'] || row['PROPIETARIO'] ||
-             row['Nombre'] || row['NOMBRE'] || row['Owner'] || '').trim()
-
-    let rep =
-      String(row['Representado por'] || row['REPRESENTADO POR'] ||
-             row['Representante'] || row['REPRESENTANTE'] ||
-             row['Apoderado'] || row['APODERADO'] ||
-             row['Representative'] || '').trim()
+    // Header-tolerant lookup. Hypal: 'Unidades'/'Asistente'. Luxor: 'Número'/'Estado'.
+    const rawUnit = pickField(row, isUnitHeader)
+    const owner   = pickField(row, isOwnerHeader)
+    let rep       = pickField(row, isRepHeader)
 
     // Skip header-like rows and empty rows
-    if (!unit || !owner) continue
-    if (unit.toLowerCase() === 'unidad' || owner.toLowerCase() === 'participante') continue
-    if (unit.toLowerCase() === 'apartamento') continue
+    if (!rawUnit || !owner) continue
+    const lu = rawUnit.toLowerCase()
+    if (lu === 'unidad' || lu === 'unidades' || lu === 'apartamento') continue
+    if (owner.toLowerCase() === 'participante') continue
 
-    // Attendance status. Hypal: 'Asistencia' ("Presente"). Luxor: 'Estado'
-    // (ASISTIÓ / REPRESENTADO / AUSENTE). Only absent attendees are excluded.
-    const asistencia =
-      String(row['Asistencia'] || row['ASISTENCIA'] ||
-             row['Estado'] || row['ESTADO'] ||
-             'Presente').trim()
-    if (asistencia && asistencia.toLowerCase() === 'ausente') continue
+    // Attendance status. Hypal: 'Asistencia'/'Asistente' ("Presente"/"Apoderado").
+    // Luxor: 'Estado' (ASISTIÓ / REPRESENTADO / AUSENTE). Only absent are excluded;
+    // 'Apoderado'/'Representado' count toward the quorum (represented by proxy).
+    const asistencia = pickField(row, isStatusHeader) || 'Presente'
+    if (asistencia.toLowerCase() === 'ausente') continue
 
     // 'REPRESENTADO' with no representative name found → mark as represented
     if (asistencia.toLowerCase() === 'representado' && !rep) {
       rep = 'Representado'
     }
 
+    // Split the tower suffix ("10A TA") and clean residential codes for lookup.
+    const { unit, tower } = splitUnitTower(rawUnit)
+
     records.push({
       unit,
       owner_name: owner,
       represented_by: rep || undefined,
+      tower,
     })
   }
 
