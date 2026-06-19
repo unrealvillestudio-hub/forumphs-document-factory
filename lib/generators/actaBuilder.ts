@@ -10,6 +10,28 @@ import {
 } from './numeroALetras'
 import { matchVoteToSection, describeVoteResult } from '../processors/voteMatcher'
 
+// ---- Inline-markup sanitizer ----
+// Strips Pandoc/Markdown residue that must never reach the final acta:
+//   [texto]{.mark}  → texto      (bracketed span with attributes)
+//   {.mark} / {#id} → (removed)  (stray attribute blocks)
+// Plain placeholders like [FINCA PENDIENTE] (no following {...}) are preserved,
+// and **bold** is left untouched (handled by the DOCX run splitter).
+export function stripInlineMarkup(s: string): string {
+  return s
+    .replace(/\[([^\]]*)\]\{[^}]*\}/g, '$1')
+    .replace(/\{[.#][^}]*\}/g, '')
+}
+
+// ---- Quorum-section detector ----
+// The acta always emits a single hardcoded "VERIFICACIÓN DEL QUÓRUM" section with
+// the official count. When the orden del día ALSO lists "Verificación del quórum"
+// as point 1 (the usual case), that agenda item must NOT be rendered as a second
+// numbered header — its narrative folds under the single quorum section.
+export function isQuorumSectionTitle(title: string): boolean {
+  const t = (title || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+  return /\bquorum\b/.test(t)
+}
+
 // ---- Helper: number formatting ----
 // Canonical acta format = words + (digits). Single source of truth in numeroALetras.ts.
 
@@ -81,7 +103,7 @@ function buildQuorumSection(
   // Attendance table note
   if (parsed.attendance.length > 0) {
     paragraphs.push(
-      `Se encontraban presentes o debidamente representadas [${fmtUnidades(presentUnits)}]{.mark}, a saber:`
+      `Se encontraban presentes o debidamente representadas ${fmtUnidades(presentUnits)}, a saber:`
     )
   }
 
@@ -203,8 +225,13 @@ export function buildActaText(
   // Debate sections
   const debateSections = buildDebateSections(parsed, formalizedBlocks)
   for (const section of debateSections) {
-    lines.push(`${section.number}. ${section.title}`)
-    lines.push('')
+    // Skip the duplicate header when this agenda item IS the quorum point — the
+    // single hardcoded "1. VERIFICACIÓN DEL QUÓRUM" above already covers it. Its
+    // narrative (owner interventions) still renders, without a re-numbered header.
+    if (!isQuorumSectionTitle(section.title)) {
+      lines.push(`${section.number}. ${section.title}`)
+      lines.push('')
+    }
     lines.push(...section.content)
     lines.push('')
   }
@@ -225,7 +252,9 @@ export function buildActaText(
   lines.push('')
   lines.push('PRESIDENTE/A                    SECRETARIO/A')
 
-  return lines.join('\n')
+  // Final sweep: strip any Pandoc/Markdown residue ([...]{.mark}, {.x}, {#id})
+  // that slipped in from formalized blocks or templates.
+  return stripInlineMarkup(lines.join('\n'))
 }
 
 // ---- Attendance table builder ----
