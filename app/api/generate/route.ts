@@ -64,7 +64,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       ShadingType,
     } = await import('docx')
     const { assignBlocksToSections } = await import('@/lib/processors/sectionAssigner')
-    const { buildActaText }          = await import('@/lib/generators/actaBuilder')
+    const { buildActaText, isQuorumSectionTitle, stripInlineMarkup } = await import('@/lib/generators/actaBuilder')
     const { runQAScan }              = await import('@/lib/processors/qaScanner')
     const s            = parsed.skeleton
     const phName       = s.ph_name || 'PH'
@@ -154,6 +154,9 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     // ── Helpers ──────────────────────────────────────────────────────────────
     const TNR = 'Times New Roman'
     function mdRuns(text: string, size = 22, italic = false) {
+      // Strip Pandoc/Markdown residue ([...]{.mark}, {.x}, {#id}) before splitting
+      // bold runs — keeps the DOCX text clean of highlight/attribute markup.
+      text = stripInlineMarkup(text)
       const parts = text.split(/(\*\*[^*]+\*\*)/)
       return parts.map(part => {
         if (part.startsWith('**') && part.endsWith('**')) {
@@ -313,11 +316,16 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     })
     if (agendaItems.length > 0) {
       for (const item of agendaItems) {
-        const displayNum = item.number + sectionOffset
-        docChildren.push(sectionTitle(displayNum, item.title.toUpperCase()))
-        if (icrFindings.length > 0) {
-          const banner = icrSectionBanner(findingsForSection(icrFindings, item.number))
-          if (banner) docChildren.push(banner)
+        // Quorum agenda point: don't re-emit a header — the hardcoded quorum
+        // section above is the single official one. Its narrative still renders
+        // below (without a duplicate "VERIFICACIÓN DEL QUÓRUM" header).
+        if (!isQuorumSectionTitle(item.title)) {
+          const displayNum = item.number + sectionOffset
+          docChildren.push(sectionTitle(displayNum, item.title.toUpperCase()))
+          if (icrFindings.length > 0) {
+            const banner = icrSectionBanner(findingsForSection(icrFindings, item.number))
+            if (banner) docChildren.push(banner)
+          }
         }
         const sectionBlocks = assignedBlocks.filter(b => b.agenda_section === item.number && !b.skip && b.text_formal)
         if (sectionBlocks.length === 0 && item === agendaItems[0]) {
