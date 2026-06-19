@@ -226,13 +226,14 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       }
     }
     // ── FIX 4 — Gender unresolved warning (dual "La señora/El señor") ──────────
-    // After FIX 3 (model reads context), any remaining dual indicates no gender
-    // signal was available. Surface once so Ivette can fix manually.
+    // Reads workingBlocks (AFTER GAP-3 consolidation), so it only flags the
+    // intervinientes that genuinely stayed in the uniform dual — no longer the
+    // pre-consolidation duals that consolidateGender already resolved.
     {
       const dualRe = /La señora\/El señor \*\*([^,*\n]+)/g
       const dualNames = new Set<string>()
       let totalDual = 0
-      for (const block of formalizedBlocks) {
+      for (const block of workingBlocks) {
         if (!block.text_formal) continue
         let m
         const re = /La señora\/El señor \*\*([^,*\n]+)/g
