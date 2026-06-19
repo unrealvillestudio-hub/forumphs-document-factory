@@ -24,7 +24,10 @@
 import type { DebateBlock } from '../types'
 
 type Gender = 'F' | 'M'
-const ADMIN_ROLES = new Set(['administracion', 'abogado'])
+// Roles that never get a "señora/señor" treatment: admin/abogado, plus 'unknown'
+// (GAP 5 marks unresolved speakers as 'unknown' + [ROL NO VERIFICADO] — they must
+// not receive a gendered owner treatment).
+const ADMIN_ROLES = new Set(['administracion', 'abogado', 'unknown'])
 
 function normName(s: string): string {
   return (s || '')
