@@ -349,15 +349,22 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         spacing: { before: 160, after: 160 },
       })
     const emptyLine = () => new Paragraph({ children: [new TextRun({ text: '', size: 22, font: TNR })] })
-    // ── ICR inline banner ─────────────────────────────────────────────────────
+    // ── ICR inline banner — R5: puntero visual al reporte ICR externo.
+    // Ya NO hay anexo embebido ni numeración global de findings. La marca solo
+    // señala, por sección, que hay hallazgos y su peor gravedad, y remite a Ivette
+    // al reporte ICR externo (descargable) para el detalle. `sFindings.length` es
+    // la cantidad de hallazgos DE ESTA SECCIÓN, no un índice global.
     const icrSectionBanner = (sFindings: ICRFinding[]) => {
       if (sFindings.length === 0) return null
       const worst = getWorstSev(sFindings)
       const col = ICR_COLORS[worst]
+      const mark = sFindings.length > 1
+        ? `⟦ICR · ${sFindings.length} hallazgos⟧`
+        : `⟦ICR⟧`
       return new Paragraph({
         shading: { type: ShadingType.CLEAR, fill: col.bg, color: col.bg },
         children: [new TextRun({
-          text: `${col.label}  ·  ${sFindings.length} hallazgo${sFindings.length > 1 ? 's' : ''} ICR en esta sección  —  ver Anexo ICR al final del documento`,
+          text: `${mark}  ${col.label}  ·  ver detalle en el Reporte ICR (documento aparte)`,
           size: 18, font: TNR, color: '333333',
         })],
         spacing: { before: 0, after: 160 },
@@ -603,60 +610,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       rows: [sigRow(LINE, LINE), sigRow(presName, secName, true), sigRow('PRESIDENTE/A', 'SECRETARIO/A', true)],
       width: { size: 9360, type: WidthType.DXA }, columnWidths: [4680, 4680],
     }))
-    // ── ICR ANNEX ─────────────────────────────────────────────────────────────
-    if (icrFindings.length > 0) {
-      docChildren.push(new Paragraph({
-        children: [new TextRun({ text: '', size: 22, font: TNR })],
-        pageBreakBefore: true, spacing: { before: 0, after: 0 },
-      }))
-      docChildren.push(new Paragraph({
-        children: [new TextRun({ text: 'ANEXO ICR — REVISIÓN DE CONSISTENCIA LEGAL', bold: true, underline: { type: UnderlineType.SINGLE }, size: 26, font: TNR })],
-        alignment: AlignmentType.CENTER, spacing: { before: 0, after: 120 },
-      }))
-      docChildren.push(new Paragraph({
-        children: [new TextRun({
-          text: `ForumPHs Document Factory  ·  ${icrFindings.length} hallazgo${icrFindings.length > 1 ? 's' : ''} detectados  ·  Para uso interno — no forma parte del acta oficial`,
-          size: 17, font: TNR, color: '888888', italics: true,
-        })],
-        alignment: AlignmentType.CENTER, spacing: { before: 0, after: 400 },
-      }))
-      const sortedFindings = [...icrFindings].sort((a, b) => SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity))
-      for (const finding of sortedFindings) {
-        const col = ICR_COLORS[finding.severity] || ICR_COLORS.LOW
-        const noBorder = { style: BorderStyle.NONE, size: 0, color: 'auto' }
-        docChildren.push(new Table({
-          rows: [new TableRow({
-            children: [new TableCell({
-              shading: { type: ShadingType.CLEAR, fill: col.bg, color: col.bg },
-              borders: { left: { style: BorderStyle.THICK, size: 12, color: col.accent }, top: noBorder, bottom: noBorder, right: noBorder },
-              children: [
-                new Paragraph({
-                  children: [
-                    new TextRun({ text: col.label + '  ·  ', bold: true, size: 20, font: TNR, color: '111111' }),
-                    new TextRun({ text: finding.category || '', bold: true, size: 20, font: TNR, color: '333333' }),
-                  ],
-                  spacing: { before: 140, after: 60 },
-                }),
-                new Paragraph({
-                  children: [new TextRun({ text: finding.location || finding.section || '', size: 17, font: TNR, color: '666666', italics: true })],
-                  spacing: { before: 0, after: 100 },
-                }),
-                new Paragraph({
-                  children: [new TextRun({ text: finding.issue || '', size: 20, font: TNR, color: '111111' })],
-                  spacing: { before: 0, after: 100 },
-                }),
-                new Paragraph({
-                  children: [new TextRun({ text: '→  ' + (finding.suggestion || ''), size: 18, font: TNR, color: '444444' })],
-                  spacing: { before: 0, after: 140 },
-                }),
-              ],
-            })],
-          })],
-          width: { size: 9360, type: WidthType.DXA }, columnWidths: [9360],
-        }))
-        docChildren.push(emptyLine())
-      }
-    }
     // ── IMAGES APPENDIX — Mano B (curaduría visual) ────────────────────────────
     const docImages = parsed.images || []
     if (docImages.length > 0) {
