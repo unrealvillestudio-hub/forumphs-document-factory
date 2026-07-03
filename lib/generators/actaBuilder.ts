@@ -9,6 +9,7 @@ import {
   fmtVotos, fmtUnidades, fmtPorcentaje, fmtHora, fmtFinca, conLetras,
 } from './numeroALetras'
 import { matchVoteToSection, describeVoteResult } from '../processors/voteMatcher'
+import { sortByTimestamp } from '../processors/sectionAssigner'
 
 // ---- Inline-markup sanitizer ----
 // Strips Pandoc/Markdown residue that must never reach the final acta:
@@ -109,7 +110,7 @@ function buildQuorumSection(
 
   return {
     number: 1,
-    title: 'VERIFICACIÓN DEL QUORUM',
+    title: 'VERIFICACIÓN DEL QUÓRUM',
     content: paragraphs,
   }
 }
@@ -128,9 +129,11 @@ function buildDebateSections(
 
   for (const item of agendaItems) {
     const paragraphs: string[] = []
-    const sectionBlocks = formalizedBlocks.filter(
+    // Chronological order WITHIN the section (Opción A) — MUST match the .docx
+    // path in /api/generate, or the ICR audits a different order than Ivette sees.
+    const sectionBlocks = sortByTimestamp(formalizedBlocks.filter(
       b => b.agenda_section === item.number && !b.skip && b.text_formal
-    )
+    ))
 
     for (const block of sectionBlocks) {
       if (block.text_formal) {

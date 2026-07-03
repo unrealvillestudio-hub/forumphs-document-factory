@@ -63,7 +63,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       AlignmentType, WidthType, BorderStyle, Packer, UnderlineType, Footer,
       ShadingType,
     } = await import('docx')
-    const { assignBlocksToSections } = await import('@/lib/processors/sectionAssigner')
+    const { assignBlocksToSections, sortByTimestamp } = await import('@/lib/processors/sectionAssigner')
     const { buildActaText, isQuorumSectionTitle, stripInlineMarkup } = await import('@/lib/generators/actaBuilder')
     const { runQAScan }              = await import('@/lib/processors/qaScanner')
     const s            = parsed.skeleton
@@ -149,6 +149,22 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       }
     } catch (e) {
       console.error('Gender consolidation failed (non-fatal):', e)
+    }
+
+    // ── Possible duplicates — mark, do not remove. Ivette verifies against the
+    // recording. The dedup marks are set by the parser (upstream of everything)
+    // and preserved through the EF + GAP processors via object spread, so they
+    // survive on workingBlocks. One consolidated MEDIUM finding.
+    const dupBlocks = (workingBlocks || []).filter(b => b.possible_duplicate)
+    if (dupBlocks.length > 0) {
+      const who = [...new Set(dupBlocks.map(b => b.speaker_name).filter(Boolean))]
+      icrFindings.push({
+        severity: 'MEDIUM',
+        category: 'NARRATIVE_QUALITY',
+        location: 'Cuerpo del acta — intervenciones',
+        issue: `${dupBlocks.length} intervención(es) con contenido posiblemente duplicado (posible doble exportación de la transcripción o tema debatido en dos momentos): ${who.join(', ')}. El sistema no las eliminó para no perder evidencia.`,
+        suggestion: 'Verificar contra la grabación: si es una repetición por doble exportación, eliminar la copia; si el tema se debatió en dos momentos reales, conservar ambas. Esta marca ayuda a identificar la fuente de la duplicidad.',
+      })
     }
 
     const assignedBlocks       = assignBlocksToSections(workingBlocks, s.agenda_items)
@@ -311,11 +327,16 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         indent: opts.indent ? { left: 720 } : undefined,
         spacing: { before: opts.before ?? 120, after: 120, line: 276 },
       })
-    // ── sectionTitle — NO number prefix (Ivette canonical) ───────────────────
-    const sectionTitle = (_num: number | undefined, title: string) =>
+    // ── sectionTitle — R4: numbered sections (Ivette's real acta numbers 1.–8.).
+    // A previous change dropped the number prefix; this restores it. `num` null →
+    // title only (e.g. "OTRAS VOTACIONES").
+    const sectionTitle = (num: number | undefined, title: string) =>
       new Paragraph({
         children: [
-          new TextRun({ text: title, bold: true, underline: { type: UnderlineType.SINGLE }, size: 22, font: TNR }),
+          new TextRun({
+            text: num != null ? `${num}. ${title}` : title,
+            bold: true, underline: { type: UnderlineType.SINGLE }, size: 22, font: TNR,
+          }),
         ],
         spacing: { before: 360, after: 160 },
       })
@@ -379,7 +400,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
     }
     docChildren.push(emptyLine())
     // ── SECTION 1: QUORUM ─────────────────────────────────────────────────────
-    docChildren.push(sectionTitle(1, 'VERIFICACIÓN DEL QUORUM'))
+    docChildren.push(sectionTitle(1, 'VERIFICACIÓN DEL QUÓRUM'))
     if (icrFindings.length > 0) {
       const banner = icrSectionBanner(findingsForSection(icrFindings, 1))
       if (banner) docChildren.push(banner)
@@ -458,6 +479,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         // Quorum agenda point: don't re-emit a header — the hardcoded quorum
         // section above is the single official one. Its narrative still renders
         // below (without a duplicate "VERIFICACIÓN DEL QUÓRUM" header).
+        // R4/4d: every non-quorum agenda point renders as its OWN numbered
+        // section. "APROBACIÓN DEL ORDEN DEL DÍA", when the parser extracts it as
+        // a numbered point (extractAgendaItems), lands here — not folded into
+        // quórum (isQuorumSectionTitle matches only /quorum/). No invented header.
         if (!isQuorumSectionTitle(item.title)) {
           const displayNum = item.number + sectionOffset
           docChildren.push(sectionTitle(displayNum, item.title.toUpperCase()))
@@ -466,9 +491,13 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
             if (banner) docChildren.push(banner)
           }
         }
-        const sectionBlocks = assignedBlocks.filter(b => b.agenda_section === item.number && !b.skip && b.text_formal)
+        const sectionBlocks = sortByTimestamp(
+          assignedBlocks.filter(b => b.agenda_section === item.number && !b.skip && b.text_formal)
+        )
         if (sectionBlocks.length === 0 && item === agendaItems[0]) {
-          const unassigned = assignedBlocks.filter(b => !b.skip && b.text_formal && !b.agenda_section)
+          const unassigned = sortByTimestamp(
+            assignedBlocks.filter(b => !b.skip && b.text_formal && !b.agenda_section)
+          )
           for (const block of unassigned) {
             if (block.text_formal) docChildren.push(normal(block.text_formal, { before: 200 }))
           }
@@ -520,7 +549,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
         const banner = icrSectionBanner(findingsForSection(icrFindings, 2))
         if (banner) docChildren.push(banner)
       }
-      for (const block of assignedBlocks.filter(b => !b.skip && b.text_formal)) {
+      for (const block of sortByTimestamp(assignedBlocks.filter(b => !b.skip && b.text_formal))) {
         if (block.text_formal) docChildren.push(normal(block.text_formal, { before: 200 }))
       }
       for (const vote of parsed.votations) {

@@ -70,6 +70,9 @@ export interface DebateBlock {
   agenda_section?: number
   skip?: boolean
   skip_reason?: string
+  // NUEVOS — dedup como marca (no borrado). El sistema marca, Ivette decide.
+  possible_duplicate?: boolean   // true si el contenido reaparece no-consecutivo
+  duplicate_of?: number          // índice (en el array debates) del bloque gemelo previo
 }
 
 export interface ParsedHypalZip {

@@ -36,10 +36,19 @@ const PHASES: { keys: Step[]; label: string }[] = [
   { keys: ['qa', 'icr_review'], label: 'QA · ICR' },
 ]
 
-// Progressive QA re-run sweeps: sweep 1 = attempt 0 … up to MAX_SWEEPS.
-// Each sweep raises the Edge Function formalization tolerance (retryAttempt)
-// and relaxes the QA scanner thresholds, so the completeness score can climb.
-const MAX_SWEEPS = 4
+// Single sweep (barrido único): the operator picks ONE level BEFORE formalizing,
+// instead of accumulating incremental re-run sweeps. The level is the EF
+// tolerance (retry_attempt) AND the QA `attempt`, kept consistent.
+//   0 (mínimo)      → SYS0 — respeta NULL, descarta ruido (DEFAULT)
+//   1 (intermedio)  → SYS1 — mayor cobertura (asambleas con mucho debate)
+//   2 (literal)     → SYS2 — máxima inclusión
+type SweepLevel = 0 | 1 | 2
+const SWEEP_LEVELS: { level: SweepLevel; label: string; hint: string }[] = [
+  { level: 0, label: '0 (mínimo)',     hint: 'Respeta NULL, descarta ruido' },
+  { level: 1, label: '1 (intermedio)', hint: 'Mayor cobertura' },
+  { level: 2, label: '2 (literal)',    hint: 'Máxima inclusión' },
+]
+const SWEEP_NAME = ['mínimo', 'intermedio', 'literal']
 
 // ── Answer coercion helpers (Pre-flight values arrive as string|number|boolean) ──
 const asText = (v: string | number | boolean | undefined): string | undefined =>
@@ -60,7 +69,10 @@ export default function DocumentFactoryPage() {
   const [icrLoading, setIcrLoading]   = useState(false)
   const [gen, setGen]                 = useState<GenerateResponse | null>(null)
   const [error, setError]             = useState('')
-  const [retry, setRetry]             = useState(0)
+  // Barrido único: chosen level (0|1|2) + whether formalization has been launched
+  // for that level. No incremental sweep counter.
+  const [sweepLevel, setSweepLevel]   = useState<SweepLevel>(0)
+  const [sweepStarted, setSweepStarted] = useState(false)
 
   const activeIdx = PHASES.findIndex(p => p.keys.includes(step))
 
@@ -146,6 +158,7 @@ export default function DocumentFactoryPage() {
     informe?: string,
   ) => {
     setPreflight(buildPreflight(answers, informe))
+    setSweepStarted(false)   // show the level selector before formalizing
     setStep('formalize')
   }
 
@@ -169,7 +182,7 @@ export default function DocumentFactoryPage() {
           preflight,
           formalizedBlocks: blocks,
           icr_findings: findings,
-          attempt: retry,
+          attempt: sweepLevel,
         }),
       })
       const json = (await res.json()) as GenerateResponse
@@ -268,10 +281,12 @@ export default function DocumentFactoryPage() {
   const reset = () => {
     setStep('upload'); setParsed(null); setGaps([]); setPreflight(null)
     setIcrReport(null); setIcrLoading(false)
-    setGen(null); setError(''); setRetry(0)
+    setGen(null); setError(''); setSweepLevel(0); setSweepStarted(false)
   }
 
-  const regenerate = () => { setRetry(r => Math.min(r + 1, MAX_SWEEPS - 1)); setStep('formalize') }
+  // Barrido único: "regenerar" vuelve al selector de nivel (re-elegir el mismo u
+  // otro nivel) y reformaliza. Ya no hay contador incremental ni tope.
+  const regenerate = () => { setSweepStarted(false); setStep('formalize') }
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
@@ -312,13 +327,49 @@ export default function DocumentFactoryPage() {
           <PreflightForm gaps={gaps} parsed={parsed} onSubmit={handlePreflight} />
         )}
 
-        {step === 'formalize' && parsed && (
+        {step === 'formalize' && parsed && !sweepStarted && (
+          <div className="fade-in" style={{ background: 'var(--carbon)', border: '1px solid rgba(92,52,114,0.2)', borderRadius: 12, padding: '32px 28px' }}>
+            <h2 style={{ fontFamily: 'EB Garamond, serif', fontSize: 28, fontWeight: 400, color: 'var(--parch)', margin: '0 0 6px' }}>
+              Nivel de barrido
+            </h2>
+            <p style={{ color: 'var(--parch-dim)', fontSize: 14, margin: '0 0 22px' }}>
+              Barrido único. Mínimo descarta más ruido; literal conserva más. Para asambleas con mucho debate, usar 1 o 2.
+            </p>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 26 }}>
+              {SWEEP_LEVELS.map(({ level, label, hint }) => {
+                const active = sweepLevel === level
+                return (
+                  <button
+                    key={level}
+                    onClick={() => setSweepLevel(level)}
+                    style={{
+                      flex: '1 1 160px', textAlign: 'left', cursor: 'pointer',
+                      background: active ? 'rgba(92,52,114,0.22)' : 'rgba(255,255,255,0.03)',
+                      border: `1px solid ${active ? 'var(--amatista)' : 'rgba(92,52,114,0.25)'}`,
+                      borderRadius: 10, padding: '14px 16px', transition: 'all 0.15s',
+                    }}
+                  >
+                    <div style={{ fontSize: 15, fontWeight: 700, color: active ? 'var(--am-l)' : 'var(--parch)', marginBottom: 4 }}>
+                      {label}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--parch-dim)' }}>{hint}</div>
+                  </button>
+                )
+              })}
+            </div>
+            <button className="df-btn-primary" onClick={() => setSweepStarted(true)} style={{ padding: '12px 32px', fontSize: 15 }}>
+              Formalizar · barrido {sweepLevel} ({SWEEP_NAME[sweepLevel]}) →
+            </button>
+          </div>
+        )}
+
+        {step === 'formalize' && parsed && sweepStarted && (
           <ProcessingPipeline
-            key={`formalize-${retry}`}
+            key={`formalize-${sweepLevel}`}
             blocks={parsed.debates}
             skeleton={parsed.skeleton}
             onComplete={handleFormalized}
-            retryAttempt={retry}
+            retryAttempt={sweepLevel}
           />
         )}
 
@@ -343,8 +394,7 @@ export default function DocumentFactoryPage() {
               onRegenerate={regenerate}
               onContinue={runICR}
               continueLabel="Revisión ICR →"
-              attempt={retry}
-              maxAttempts={MAX_SWEEPS}
+              attempt={sweepLevel}
             />
             <div style={{ display: 'flex', gap: 12, marginTop: 16, flexWrap: 'wrap' }}>
               <button className="df-btn-primary" onClick={downloadDocx} style={{ padding: '12px 28px', fontSize: 15 }}>
