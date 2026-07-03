@@ -195,6 +195,32 @@ function shouldSkip(text: string): { skip: boolean; reason?: string } {
   return { skip: false }
 }
 
+// ---- Dedup detection helpers (mark, never remove) ----
+
+// Normalize content for duplicate comparison: lowercase, no accents, no digits,
+// no punctuation, collapsed whitespace. Twins are not char-identical (the model
+// rewrites them differently), but the RAW text entering the parser IS nearly
+// identical on a double export — compare over text_cleaned || text_raw.
+function normForDup(s: string): string {
+  return (s || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[0-9]/g, '')
+    .replace(/[^a-z\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// Deterministic token Jaccard over words longer than 3 chars. No new deps.
+function jaccard(a: string, b: string): number {
+  const sa = new Set(a.split(' ').filter(w => w.length > 3))
+  const sb = new Set(b.split(' ').filter(w => w.length > 3))
+  if (sa.size === 0 || sb.size === 0) return 0
+  let inter = 0
+  for (const w of sa) if (sb.has(w)) inter++
+  return inter / (sa.size + sb.size - inter)
+}
+
 // ---- VTT/SRT/plain parser ----
 
 interface RawLine {
@@ -292,6 +318,28 @@ export function parseTranscripcion(rawText: string): DebateBlock[] {
       skip,
       skip_reason: reason,
     })
+  }
+
+  // ── Dedup DETECTION (mark only, never remove/reorder) ──────────────────────
+  // Marks a block as possible_duplicate when the SAME speaker's near-identical
+  // content reappears NON-adjacently (adjacent turns are already merged by
+  // consolidate). The system marks; Ivette decides against the recording. This
+  // also helps diagnose double Hypal exports. Does NOT alter block count/order.
+  for (let i = 0; i < blocks.length; i++) {
+    const bi = blocks[i]
+    const contentI = normForDup(bi.text_cleaned || bi.text_raw)
+    if (contentI.length < 60) continue // ignore trivial/short blocks here
+    for (let j = 0; j < i - 1; j++) { // j < i-1 => NON-adjacent
+      const bj = blocks[j]
+      if (normForDup(bj.speaker_name) !== normForDup(bi.speaker_name)) continue
+      const contentJ = normForDup(bj.text_cleaned || bj.text_raw)
+      if (contentJ.length < 60) continue
+      if (jaccard(contentI.slice(0, 400), contentJ.slice(0, 400)) >= 0.85) {
+        bi.possible_duplicate = true
+        bi.duplicate_of = j
+        break
+      }
+    }
   }
 
   return blocks

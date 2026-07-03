@@ -101,17 +101,20 @@ export function assignBlocksToSections(
       }
     }
 
-    // 2. Keyword matching — only if score is high enough (>40%)
+    // 2. Keyword matching — only on a STRONG lexical match (>70%). A low
+    //    threshold teleported budget content under the "elección" header when
+    //    sections shared words; explicit transitions (PASO 1.2, "puntos EN
+    //    ORDEN") take precedence over weak lexical coincidence.
     let bestMatch = currentSection
     let bestScore = 0
     for (const [sectionNum, keywords] of keywordSets) {
       const score = matchScore(text, keywords)
-      if (score > bestScore && score > 0.4) {
+      if (score > bestScore && score > 0.7) {
         bestScore = score
         bestMatch = sectionNum
       }
     }
-    if (bestScore > 0.4 && bestMatch !== currentSection) {
+    if (bestScore > 0.7 && bestMatch !== currentSection) {
       // Only switch section if the match is significantly better
       currentSection = bestMatch
     }
@@ -120,4 +123,21 @@ export function assignBlocksToSections(
   }
 
   return result
+}
+
+// Chronological ordering (Opción A): preserve agenda grouping, order WITHIN a
+// section by wall-clock timestamp. Missing timestamps fall back to original
+// appearance order (stable) so it is never worse than today.
+export function sortByTimestamp<T extends { timestamp?: string }>(blocks: T[]): T[] {
+  const toSec = (ts?: string): number => {
+    if (!ts) return Number.POSITIVE_INFINITY
+    const m = ts.match(/(\d{1,2}):(\d{2}):(\d{2})/)
+    if (!m) return Number.POSITIVE_INFINITY
+    return (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3])
+  }
+  // stable sort: decorate with original index as tiebreaker
+  return blocks
+    .map((b, i) => ({ b, i, t: toSec(b.timestamp) }))
+    .sort((x, y) => (x.t - y.t) || (x.i - y.i))
+    .map(d => d.b)
 }

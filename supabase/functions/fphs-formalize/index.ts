@@ -1,6 +1,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const P = 5;
+// R3 — minimum substantive words for a fragment to count as an intervention.
+// Starting point for future calibration.
+const TRIVIAL_MIN_WORDS = 5;
 const SB_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SB_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 
@@ -153,6 +156,19 @@ Deno.serve(async (req: Request) => {
       const t = (b.text_cleaned || b.text_raw || '').trim();
       if (t.length < minLen) {
         r[i] = { ...b, skip: true, skip_reason: 'empty' };
+        return;
+      }
+      // R3 — trivial fragments are NOT interventions: skip even under forceInclude.
+      // "tomó la palabra", "respondió afirmativamente", "sí, correcto" carry no
+      // substantive assembly content (PASO 2.1 / PASO 7). Count meaningful words.
+      const meaningfulWords = t
+        .toLowerCase()
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-z\s]/g, ' ')
+        .split(/\s+/)
+        .filter((w: string) => w.length > 3).length;
+      if (meaningfulWords < TRIVIAL_MIN_WORDS) {
+        r[i] = { ...b, skip: true, skip_reason: 'trivial' };
         return;
       }
       if (useTemplate) {

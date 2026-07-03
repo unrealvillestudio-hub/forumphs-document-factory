@@ -26,10 +26,14 @@ const ERROR_LABELS: Record<string, string> = {
   GENDER_MISMATCH: 'Género incorrecto',
 }
 
+const SWEEP_NAMES = ['mínimo', 'intermedio', 'literal']
+
 export default function QAReportView({ report, wordCount, filename, onDownload, onRegenerate, showDownload, onContinue, continueLabel, attempt, maxAttempts }: QAReportViewProps) {
-  const maxSweeps = maxAttempts ?? 4
-  const sweep = (attempt ?? 0) + 1
-  const canRegen = sweep < maxSweeps
+  // Barrido único: `attempt` is the chosen level (0|1|2), not an incremental
+  // sweep index. Re-running means re-picking a level, so it is always available.
+  void maxAttempts
+  const level = attempt ?? 0
+  const levelName = SWEEP_NAMES[level] ?? String(level)
 
   const verdictColor = {
     PASS: '#4ADE80',
@@ -288,17 +292,11 @@ export default function QAReportView({ report, wordCount, filename, onDownload, 
             {continueLabel || 'Continuar'}
           </button>
         )}
-        {canRegen ? (
-          <button className="df-btn-ghost" onClick={onRegenerate}>
-            ↺ Nueva barrida
-          </button>
-        ) : (
-          <button className="df-btn-ghost" disabled style={{ opacity: 0.5, cursor: 'not-allowed' }}>
-            Máximo de intentos alcanzado
-          </button>
-        )}
+        <button className="df-btn-ghost" onClick={onRegenerate}>
+          ↺ Cambiar nivel de barrido
+        </button>
         <span style={{ fontSize: 12, color: 'var(--parch-dim)' }}>
-          Barrida {sweep} de {maxSweeps}{canRegen ? ' · cada barrida sube la tolerancia del QA' : ''}
+          Barrido nivel {level} ({levelName})
         </span>
       </div>
     </div>

@@ -23,6 +23,9 @@ interface ChunkStatus {
 // Supabase Edge Function URL
 const EDGE_FN_URL = 'https://amlvyycfepwhiindxgzw.supabase.co/functions/v1/fphs-formalize'
 const CHUNK_SIZE = 15  // blocks per Edge Function call
+// Barrido único: retryAttempt is the fixed level (0|1|2), not a retry counter.
+const SWEEP_NAMES = ['mínimo', 'intermedio', 'literal']
+const sweepName = (n: number) => SWEEP_NAMES[n] ?? String(n)
 
 export default function ProcessingPipeline({ blocks, skeleton, onComplete, retryAttempt = 0 }: ProcessingPipelineProps) {
   const [chunks, setChunks] = useState<ChunkStatus[]>([])
@@ -54,6 +57,7 @@ export default function ProcessingPipeline({ blocks, skeleton, onComplete, retry
       const allResults: DebateBlock[] = new Array(totalBlocks)
 
       // Pre-assign agenda sections before fanning out
+      // NOTE: sectionAssigner runs here and in /api/generate — consistent post-0.7 threshold
       const { assignBlocksToSections } = await import('@/lib/processors/sectionAssigner')
       const agendaItems = skeleton?.agenda_items || []
       const assignedBlocks = assignBlocksToSections(blocks, agendaItems)
@@ -133,7 +137,7 @@ export default function ProcessingPipeline({ blocks, skeleton, onComplete, retry
           <span style={{ fontSize: 12, color: done ? '#4ADE80' : 'var(--amatista-light)', fontWeight: 500, letterSpacing: '0.05em' }}>
             {done
               ? `✅ COMPLETO — ${totalChunks} agentes finalizados`
-              : `PASO 0.5 · ${runningCount} activos · ${doneCount}/${totalChunks} · grupos de 6${retryAttempt > 0 ? ` · +${retryAttempt * 10}% tolerancia` : ''}`
+              : `PASO 0.5 · ${runningCount} activos · ${doneCount}/${totalChunks} · grupos de 6 · barrido nivel ${retryAttempt} (${sweepName(retryAttempt)})`
             }
           </span>
         </div>
@@ -144,9 +148,7 @@ export default function ProcessingPipeline({ blocks, skeleton, onComplete, retry
         <p style={{ color: 'var(--parch-dim)', fontSize: 14, margin: 0 }}>
           {done
             ? `${chunks.reduce((s, c) => s + c.formalized, 0)} bloques formalizados · ${errorCount > 0 ? `${errorCount} agentes con fallback` : 'todos los agentes OK'}`
-            : retryAttempt > 0
-              ? `Reintento ${retryAttempt} — tolerancia aumentada · grupos de 6 agentes con 2s de pausa`
-              : `${totalChunks} agentes en grupos de 6 — 2s entre grupos, sin timeouts`
+            : `Barrido nivel ${retryAttempt} (${sweepName(retryAttempt)}) · ${totalChunks} agentes en grupos de 6 — 2s entre grupos, sin timeouts`
           }
         </p>
       </div>
