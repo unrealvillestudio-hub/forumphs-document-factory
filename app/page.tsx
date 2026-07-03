@@ -73,12 +73,14 @@ export default function DocumentFactoryPage() {
   // for that level. No incremental sweep counter.
   const [sweepLevel, setSweepLevel]   = useState<SweepLevel>(0)
   const [sweepStarted, setSweepStarted] = useState(false)
+  // R5 — aviso temprano no-bloqueante de posibles duplicados marcados por el parser.
+  const [dedupWarning, setDedupWarning] = useState<string | null>(null)
 
   const activeIdx = PHASES.findIndex(p => p.keys.includes(step))
 
   // ── 1 · Upload → /api/parse ──────────────────────────────────────────────
   const handleDataReady = async (data: ExtractedData) => {
-    setStep('parsing'); setError('')
+    setStep('parsing'); setError(''); setDedupWarning(null)
     try {
       const payload = JSON.stringify({
         resumen:         data.resumen,
@@ -128,6 +130,16 @@ export default function DocumentFactoryPage() {
       }
       setParsed(json.parsed)
       setGaps(json.preflight_gaps || [])
+      // R5 — warning temprano de dedup (no-bloqueante). El parser ya marcó los
+      // bloques con possible_duplicate (upstream); aquí solo se lee el flag y se
+      // avisa. NO bloquea la generación; NO recalcula; NO toca el parser.
+      const dupCount = (json.parsed.debates || []).filter(b => b.possible_duplicate).length
+      if (dupCount > 0) {
+        setDedupWarning(
+          `⚠ ${dupCount} intervención(es) marcada(s) como posible duplicado en el crudo de Hypal. ` +
+          `Se marcarán en el ICR; si persisten con barrido único, la fuente es Hypal (upstream).`
+        )
+      }
       setStep('preflight')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al analizar los documentos')
@@ -282,6 +294,7 @@ export default function DocumentFactoryPage() {
     setStep('upload'); setParsed(null); setGaps([]); setPreflight(null)
     setIcrReport(null); setIcrLoading(false)
     setGen(null); setError(''); setSweepLevel(0); setSweepStarted(false)
+    setDedupWarning(null)
   }
 
   // Barrido único: "regenerar" vuelve al selector de nivel (re-elegir el mismo u
@@ -315,6 +328,22 @@ export default function DocumentFactoryPage() {
                 </div>
               )
             })}
+          </div>
+        )}
+
+        {/* R5 — dedup warning (no-bloqueante). Informativo; el usuario puede continuar. */}
+        {dedupWarning && (step === 'preflight' || step === 'formalize') && (
+          <div className="fade-in" style={{
+            background: 'rgba(196,98,45,0.07)', border: '1px solid rgba(196,98,45,0.3)',
+            borderLeft: '3px solid var(--terra)', borderRadius: 8, padding: '12px 16px',
+            marginBottom: 24, display: 'flex', alignItems: 'flex-start', gap: 10,
+          }}>
+            <span style={{ fontSize: 13, color: 'var(--parch-dim)', lineHeight: 1.5, flex: 1 }}>{dedupWarning}</span>
+            <button
+              onClick={() => setDedupWarning(null)}
+              aria-label="Descartar aviso"
+              style={{ background: 'none', border: 'none', color: 'var(--parch-dim)', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 0 }}
+            >×</button>
           </div>
         )}
 
