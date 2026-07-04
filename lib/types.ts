@@ -33,6 +33,9 @@ export interface SkeletonData {
   secretary_name?: string
   secretary_unit?: string
   agenda_items: AgendaItem[]
+  // PR-B: transcription platform detected by detectPlatform (e.g. 'hypal' | 'toc').
+  // Diagnostic/informational only — the Pre-flight can surface it.
+  platform_id?: string
   raw_text: string
 }
 
