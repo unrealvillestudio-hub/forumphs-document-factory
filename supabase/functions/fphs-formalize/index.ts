@@ -98,7 +98,7 @@ function logTokensBatch(inputTokens: number, outputTokens: number, blockCount: n
     },
     body: JSON.stringify({
       session_type: 'edge_function',
-      model_id: 'claude-sonnet-4-6',
+      model_id: 'claude-sonnet-5',
       brand_id: 'ForumPHs',
       lab: 'document-factory',
       input_tokens: inputTokens,
@@ -186,8 +186,12 @@ Deno.serve(async (req: Request) => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-api-key': k, 'anthropic-version': '2023-06-01' },
             body: JSON.stringify({
-              model: 'claude-sonnet-4-6',
-              max_tokens: 1500,
+              model: 'claude-sonnet-5',
+              // PR-C §5 — Sonnet 5 drop-in. thinking disabled (deterministic
+              // formalization; keeps thinking tokens out of max_tokens). max_tokens
+              // 1500 -> 2000 for the new tokenizer (~30% more tokens/text).
+              thinking: { type: 'disabled' },
+              max_tokens: 2000,
               system: sys,
               messages: [{
                 role: 'user',
