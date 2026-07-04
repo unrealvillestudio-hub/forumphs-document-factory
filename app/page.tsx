@@ -89,6 +89,8 @@ export default function DocumentFactoryPage() {
         votaciones_rows: data.votaciones_rows,
         chats:           data.chats,
         images:          data.images,
+        // Filename hints for the content↔filename cross-check (suspicion only).
+        files_detected:  data.stats.files_detected,
       })
 
       // Capa 2 — payload guard. Serverless body cap is ~4.5 MB; base64 images
