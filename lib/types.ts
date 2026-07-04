@@ -16,6 +16,10 @@ export interface SkeletonData {
   ph_finca?: string
   ph_codigo?: string
   assembly_type: 'ORDINARIA' | 'EXTRAORDINARIA'
+  // true when the source text gave no clear "asamblea (general) ordinaria/
+  // extraordinaria" designation, so `assembly_type` is a display fallback the
+  // operator must confirm in the Pre-flight (avoids the silent-ORDINARIA bug).
+  assembly_type_uncertain?: boolean
   acta_number?: string
   date_str: string
   time_start: string
