@@ -21,11 +21,22 @@ export default function PreflightForm({ gaps, parsed, onSubmit }: PreflightFormP
 
   const s = parsed.skeleton
 
+  // PR-C §4c — no "Hypal" hardcoded: name the platform actually detected.
+  const platformLabel = s.platform_id === 'toc' ? 'TOC/HIF'
+    : s.platform_id === 'hypal' ? 'Hypal'
+    : ''
+
+  // PR-C §4a — synthetic gaps (field prefixed with "_": _platform_*, _xcheck_*,
+  // _icr_*, _assembly_type_uncertain) are advisories, not data to enter. Render
+  // them as non-blocking banners; only the real gaps get input fields.
+  const syntheticGaps = gaps.filter(g => g.field.startsWith('_'))
+  const realGaps = gaps.filter(g => !g.field.startsWith('_'))
+
   const set = (field: string, value: string | number | boolean) => {
     setValues(prev => ({ ...prev, [field]: value }))
   }
 
-  const requiredFilled = gaps
+  const requiredFilled = realGaps
     .filter(g => g.required)
     .every(g => values[g.field] !== undefined && values[g.field] !== '')
 
@@ -45,7 +56,7 @@ export default function PreflightForm({ gaps, parsed, onSubmit }: PreflightFormP
         }}>
           <span style={{ fontSize: 14 }}>⚠️</span>
           <span style={{ fontSize: 12, color: 'var(--terra)', fontWeight: 500, letterSpacing: '0.05em' }}>
-            PRE-FLIGHT · {gaps.filter(g => g.required).length} CAMPOS REQUERIDOS
+            PRE-FLIGHT · {realGaps.filter(g => g.required).length} CAMPOS REQUERIDOS
           </span>
         </div>
 
@@ -59,9 +70,27 @@ export default function PreflightForm({ gaps, parsed, onSubmit }: PreflightFormP
           Información necesaria
         </h2>
         <p style={{ color: 'var(--parch-dim)', fontSize: 14, margin: 0 }}>
-          El ZIP de Hypal fue procesado. Para generar el acta al 95%+ de accuracy, necesito estos datos de Ivette.
+          El ZIP{platformLabel ? ` de ${platformLabel}` : ''} fue procesado. Para generar el acta al 95%+ de accuracy, necesito estos datos de Ivette.
         </p>
       </div>
+
+      {/* PR-C §4a — synthetic advisories rendered as non-blocking banners */}
+      {syntheticGaps.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
+          {syntheticGaps.map(gap => (
+            <div key={gap.field} style={{
+              background: 'rgba(196,98,45,0.07)',
+              border: '1px solid rgba(196,98,45,0.3)',
+              borderLeft: '3px solid var(--terra)',
+              borderRadius: 8,
+              padding: '10px 14px',
+            }}>
+              <div style={{ fontSize: 13, color: 'var(--parch)', fontWeight: 600, marginBottom: 2 }}>{gap.label}</div>
+              <div style={{ fontSize: 12, color: 'var(--parch-dim)', lineHeight: 1.5 }}>{gap.description}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Summary card */}
       <div style={{
@@ -102,7 +131,7 @@ export default function PreflightForm({ gaps, parsed, onSubmit }: PreflightFormP
 
       {/* Gap fields */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20, marginBottom: 28 }}>
-        {gaps.map(gap => (
+        {realGaps.map(gap => (
           <div key={gap.field}>
             <label className="df-label" style={{ color: gap.required ? 'var(--terra)' : 'var(--parch-dim)' }}>
               {gap.label} {gap.required && <span style={{ color: 'var(--terra)' }}>*</span>}

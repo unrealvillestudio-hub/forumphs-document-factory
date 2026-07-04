@@ -98,11 +98,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const coveragePct = Math.round((Math.min(acta_text.length, MAX_INPUT_CHARS) / acta_text.length) * 100)
 
     // Scale output tokens with document size, capped for cost/latency.
-    const dynamicMaxTokens = Math.min(8000, 4000 + Math.floor(actaForAudit.length / 5000) * 400)
+    // PR-C §5 — headroom (~+35%) for Sonnet 5's tokenizer (~30% more tokens for
+    // the same text) so long finding lists don't truncate.
+    const dynamicMaxTokens = Math.min(10000, 5400 + Math.floor(actaForAudit.length / 5000) * 500)
 
     const msg = await client.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
       max_tokens: dynamicMaxTokens,
+      // PR-C §5 — Sonnet 5 runs adaptive thinking by default; disable it (this is a
+      // deterministic audit, and thinking tokens would eat into max_tokens). The
+      // pinned SDK (0.24.x) predates the `thinking` param, so attach it via a
+      // runtime passthrough — the SDK serializes it into the request body.
+      ...({ thinking: { type: 'disabled' } } as object),
       system: ICR_SYSTEM,
       messages: [{
         role: 'user',
