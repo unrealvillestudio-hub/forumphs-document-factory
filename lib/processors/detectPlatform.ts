@@ -63,7 +63,14 @@ const HYPAL_FALLBACK: PlatformParsingConfig = {
 }
 
 async function loadConfigs(): Promise<PlatformParsingConfig[] | null> {
-  if (!UNRLVL_URL || !UNRLVL_KEY) return null
+  // PR-C §4b — log every degradation reason (never the key), so a Vercel runtime
+  // log shows WHY it fell back to Hypal instead of failing invisibly.
+  if (!UNRLVL_URL || !UNRLVL_KEY) {
+    const missing = [!UNRLVL_URL && 'UNRLVL_SUPABASE_URL/NEXT_PUBLIC_SUPABASE_URL', !UNRLVL_KEY && 'unrlvl_service_role']
+      .filter(Boolean).join(' + ')
+    console.error(`[detectPlatform] config unreadable, degrading to hypal: missing env ${missing}`)
+    return null
+  }
   try {
     const res = await fetch(
       `${UNRLVL_URL}/rest/v1/df_platform_parsing_config?active=eq.true&select=*`,
@@ -76,11 +83,19 @@ async function loadConfigs(): Promise<PlatformParsingConfig[] | null> {
         cache: 'no-store',
       },
     )
-    if (!res.ok) return null
+    if (!res.ok) {
+      console.error(`[detectPlatform] config unreadable, degrading to hypal: HTTP ${res.status}`)
+      return null
+    }
     const text = await res.text()
     const rows = text ? JSON.parse(text) : null
-    return Array.isArray(rows) && rows.length > 0 ? (rows as PlatformParsingConfig[]) : null
-  } catch {
+    if (!Array.isArray(rows) || rows.length === 0) {
+      console.error('[detectPlatform] config unreadable, degrading to hypal: no active rows returned')
+      return null
+    }
+    return rows as PlatformParsingConfig[]
+  } catch (err) {
+    console.error('[detectPlatform] config unreadable, degrading to hypal:', err instanceof Error ? err.message : String(err))
     return null
   }
 }
