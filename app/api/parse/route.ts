@@ -9,10 +9,80 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import type { ParseResponse, ExtractedImage } from '@/lib/types'
+import type { ParseResponse, ExtractedImage, PreflightGap, SkeletonData } from '@/lib/types'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
+
+// ── Filename ↔ content cross-check (suspicion layer, non-blocking) ───────────
+// Sam's idea: use the ZIP filenames as a CONTRAST hint — never a source of truth —
+// to raise a flag when an extracted field disagrees with what the filename implies.
+// It never overwrites the extracted value; it only warns.
+
+const stripAccents = (s: string): string =>
+  s.normalize('NFD').replace(/[̀-ͯ]/g, '')
+
+// Generic words carrying no PH identity — dropped before token comparison.
+const GENERIC_FILE_WORDS = new Set([
+  'acta', 'actas', 'asamblea', 'asambleas', 'transcripcion', 'transcripciones',
+  'transcript', 'resumen', 'votacion', 'votaciones', 'lista', 'listado',
+  'convocatoria', 'asistencia', 'participantes', 'chat', 'mensajes', 'mensaje',
+  'ordinaria', 'extraordinaria', 'general', 'final', 'borrador', 'copia',
+  'ph', 'del', 'los', 'las', 'con', 'para', 'grabacion', 'recording',
+])
+
+function fileTokens(name: string): string[] {
+  const base = stripAccents(name.toLowerCase()).replace(/\.[a-z0-9]+$/, '') // drop extension
+  return base
+    .split(/[^a-z0-9]+/)
+    .filter(t => t.length >= 3 && !/^\d+$/.test(t) && !GENERIC_FILE_WORDS.has(t))
+}
+
+function crossCheckGap(field: string, label: string, description: string): PreflightGap {
+  return { field, label, description, required: false, type: 'text', value: '' }
+}
+
+function buildCrossCheckGaps(skeleton: SkeletonData, filesDetected: string[]): PreflightGap[] {
+  const gaps: PreflightGap[] = []
+  if (!filesDetected || filesDetected.length === 0) return gaps
+
+  const joined = filesDetected.map(n => stripAccents(n.toLowerCase())).join(' ')
+
+  // 1 · Assembly type mismatch. Check "extraordinaria" first — it contains the
+  //     substring "ordinaria", so strip it before probing for a plain ordinaria.
+  const suggestsExtra = joined.includes('extraordinaria')
+  const suggestsOrdin = joined.replace(/extraordinaria/g, '').includes('ordinaria')
+  if (suggestsExtra && skeleton.assembly_type === 'ORDINARIA') {
+    gaps.push(crossCheckGap(
+      '_xcheck_assembly_type',
+      '⚠ Tipo de asamblea — posible discrepancia',
+      "El nombre de archivo sugiere 'EXTRAORDINARIA' pero se detectó 'ORDINARIA'. Confirmá el tipo de asamblea.",
+    ))
+  } else if (suggestsOrdin && skeleton.assembly_type === 'EXTRAORDINARIA') {
+    gaps.push(crossCheckGap(
+      '_xcheck_assembly_type',
+      '⚠ Tipo de asamblea — posible discrepancia',
+      "El nombre de archivo sugiere 'ORDINARIA' pero se detectó 'EXTRAORDINARIA'. Confirmá el tipo de asamblea.",
+    ))
+  }
+
+  // 2 · PH-name mismatch. If NONE of the significant filename tokens appear in the
+  //     extracted ph_name, warn. Skip when the name is still the PENDIENTE sentinel
+  //     (already surfaced by its own required gap).
+  const phNorm = stripAccents((skeleton.ph_name || '').toLowerCase())
+  const tokens = [...new Set(filesDetected.flatMap(fileTokens))]
+  const phPending = skeleton.ph_name.includes('PENDIENTE')
+  if (!phPending && tokens.length > 0 && !tokens.some(t => phNorm.includes(t))) {
+    gaps.push(crossCheckGap(
+      '_xcheck_ph_name',
+      '⚠ Nombre del PH — posible discrepancia',
+      `El nombre del PH detectado ('${skeleton.ph_name}') no coincide con los nombres de archivo ` +
+      `(${tokens.join(', ')}). Verificá el nombre del PH.`,
+    ))
+  }
+
+  return gaps
+}
 
 export async function POST(req: NextRequest): Promise<NextResponse<ParseResponse>> {
   try {
@@ -23,6 +93,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ParseResponse
       transcripcion: string
       chats: string
       images?: Array<{ filename: string; data: string; type: string }>
+      files_detected?: string[]
     }
 
     const { parseResumen, extractAgendaItems } = await import('@/lib/parsers/parseResumen')
@@ -90,6 +161,26 @@ export async function POST(req: NextRequest): Promise<NextResponse<ParseResponse
           'No se encontraron puntos del orden del día en ningún documento del ZIP ' +
           '(Resumen, Transcripción, Chat). El acta se generará sin estructura de secciones. ' +
           'Ingrésalos manualmente en el campo "Orden del Día" del Pre-flight.',
+        required: false,
+        type: 'text',
+        value: '',
+      })
+    }
+
+    // ── Filename ↔ content cross-check (suspicion flags, non-blocking) ───────
+    const xcheckGaps = buildCrossCheckGaps(skeleton, body.files_detected || [])
+    preflight_gaps.push(...xcheckGaps)
+
+    // Assembly type was indeterminate in the source — ask the operator to confirm,
+    // unless the filename cross-check already raised a type discrepancy above.
+    const typeAlreadyFlagged = xcheckGaps.some(g => g.field === '_xcheck_assembly_type')
+    if (skeleton.assembly_type_uncertain && !typeAlreadyFlagged) {
+      preflight_gaps.push({
+        field: '_assembly_type_uncertain',
+        label: '⚠ Tipo de asamblea — confirmar',
+        description:
+          'No se encontró una designación clara ("asamblea ordinaria/extraordinaria") en el ' +
+          `texto. Se asumió '${skeleton.assembly_type}' por defecto. Confirmá el tipo de asamblea.`,
         required: false,
         type: 'text',
         value: '',
