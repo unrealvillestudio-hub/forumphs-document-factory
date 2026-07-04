@@ -279,15 +279,23 @@ async function extractDocxImages(
 // ── XLSX row extraction ──────────────────────────────────────────────────────
 
 // TOC/HIF (and similar) attendance sheets put title/subtitle/blank rows BEFORE
-// the real header (Lefevre: rows 0-2 = título/subtítulo/vacía, row 3 =
+// the real header (Lefevre: rows 0-1 = título/subtítulo, row 2 = vacía, row 3 =
 // Propiedad|Nombre|Estado|…). Feeding row 0 to sheet_to_json as the header yields
 // junk keys → 0 records. Detect the header as the first row carrying >=2 known
 // column stems and start there. Hypal (header at row 0) returns 0 → unchanged.
+//
+// PR-C §2 — COORDINATE FIX: the index returned here is passed to
+// sheet_to_json({ range }), which interprets `range` as an ABSOLUTE sheet row.
+// So the scan MUST use blankrows:true — with blankrows:false a blank row above
+// the header (Lefevre's row 2) gets collapsed, shifting the header to collapsed
+// index 2 while it lives at absolute row 3; range:2 then lands on the blank row →
+// all keys become `__EMPTY` → parseAsistencia returns 0. blankrows:true keeps the
+// array index aligned with the absolute row that `range` expects.
 const ASIS_HEADER_STEMS = /^(propiedad|unidad|apartamento|apto|numero|participante|propietario|nombre|owner|estado|asist|ingreso|salida|representa)/
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function detectHeaderRow(XLSX: any, ws: any): number {
-  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false, blankrows: false }) as unknown[][]
-  const scan = Math.min(aoa.length, 12)
+  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false, blankrows: true }) as unknown[][]
+  const scan = Math.min(aoa.length, 15)
   for (let r = 0; r < scan; r++) {
     const cells = (aoa[r] || []).map((c: unknown) =>
       String(c).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim())
