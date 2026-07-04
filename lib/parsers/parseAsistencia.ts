@@ -35,7 +35,7 @@ function pickField(row: Record<string, unknown>, pred: (nk: string) => boolean):
   return ''
 }
 
-const isUnitHeader   = (nk: string) => nk.startsWith('unidad') || nk.startsWith('unit') || nk.startsWith('numero') || nk.startsWith('apartamento') || nk.startsWith('apto')
+const isUnitHeader   = (nk: string) => nk.startsWith('unidad') || nk.startsWith('unit') || nk.startsWith('numero') || nk.startsWith('apartamento') || nk.startsWith('apto') || nk.startsWith('propiedad')
 const isOwnerHeader  = (nk: string) => nk.startsWith('participante') || nk.startsWith('propietario') || nk.startsWith('nombre') || nk.startsWith('owner')
 const isRepHeader    = (nk: string) => nk.startsWith('representado') || nk.startsWith('representante') || nk.startsWith('representative') || nk.startsWith('apoderad')
 const isStatusHeader = (nk: string) => nk.includes('asist') || nk.includes('estado')
@@ -69,7 +69,7 @@ export function parseAsistencia(rows: Record<string, unknown>[]): AttendanceReco
     // Skip header-like rows and empty rows
     if (!rawUnit || !owner) continue
     const lu = rawUnit.toLowerCase()
-    if (lu === 'unidad' || lu === 'unidades' || lu === 'apartamento') continue
+    if (lu === 'unidad' || lu === 'unidades' || lu === 'apartamento' || lu === 'propiedad') continue
     if (owner.toLowerCase() === 'participante') continue
 
     // Attendance status. Hypal: 'Asistencia'/'Asistente' ("Presente"/"Apoderado").

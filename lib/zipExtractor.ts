@@ -278,6 +278,25 @@ async function extractDocxImages(
 
 // ── XLSX row extraction ──────────────────────────────────────────────────────
 
+// TOC/HIF (and similar) attendance sheets put title/subtitle/blank rows BEFORE
+// the real header (Lefevre: rows 0-2 = título/subtítulo/vacía, row 3 =
+// Propiedad|Nombre|Estado|…). Feeding row 0 to sheet_to_json as the header yields
+// junk keys → 0 records. Detect the header as the first row carrying >=2 known
+// column stems and start there. Hypal (header at row 0) returns 0 → unchanged.
+const ASIS_HEADER_STEMS = /^(propiedad|unidad|apartamento|apto|numero|participante|propietario|nombre|owner|estado|asist|ingreso|salida|representa)/
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function detectHeaderRow(XLSX: any, ws: any): number {
+  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false, blankrows: false }) as unknown[][]
+  const scan = Math.min(aoa.length, 12)
+  for (let r = 0; r < scan; r++) {
+    const cells = (aoa[r] || []).map((c: unknown) =>
+      String(c).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim())
+    const hits = cells.filter((c: string) => ASIS_HEADER_STEMS.test(c)).length
+    if (hits >= 2) return r
+  }
+  return 0
+}
+
 async function extractXlsxRows(
   arrayBuffer: ArrayBuffer,
   allSheets = false
@@ -290,7 +309,9 @@ async function extractXlsxRows(
     if (!allSheets) {
       const ws = wb.Sheets[wb.SheetNames[0]]
       if (!ws) return []
-      return XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: '', raw: false })
+      // Skip leading title rows: use the detected header row as the header.
+      const headerRow = detectHeaderRow(XLSX, ws)
+      return XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: '', raw: false, range: headerRow })
     }
 
     // Multi-sheet (Luxor votaciones: one sheet per question). Each sheet's rows

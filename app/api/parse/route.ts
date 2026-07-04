@@ -100,11 +100,17 @@ export async function POST(req: NextRequest): Promise<NextResponse<ParseResponse
     const { parseAsistencia, parseVotaciones }  = await import('@/lib/parsers/parseAsistencia')
     const { parseTranscripcion }                = await import('@/lib/parsers/parseTranscripcion')
     const { detectPreflightGaps }               = await import('@/lib/processors/preflightDetector')
+    const { detectPlatform }                    = await import('@/lib/processors/detectPlatform')
+
+    // PR-B: detect the transcription platform (Hypal/Zoom vs TOC/HIF vs …) from
+    // config data, then segment with the matching strategy. Degrades to hypal.
+    const platform = await detectPlatform(body.transcripcion || '', body.resumen || '')
 
     const skeleton   = parseResumen(body.resumen || body.transcripcion)
     const attendance = parseAsistencia(body.asistencia_rows || [])
     const votations  = parseVotaciones(body.votaciones_rows || [])
-    const debates    = parseTranscripcion(body.transcripcion || '')
+    const debates    = parseTranscripcion(body.transcripcion || '', platform.config)
+    skeleton.platform_id = platform.id
     const chatNotes  = (body.chats || '').split('\n').filter(l => l.trim().length > 20)
 
     // ── FPH-017: Agenda cross-reference ──────────────────────────────────────
@@ -161,6 +167,30 @@ export async function POST(req: NextRequest): Promise<NextResponse<ParseResponse
           'No se encontraron puntos del orden del día en ningún documento del ZIP ' +
           '(Resumen, Transcripción, Chat). El acta se generará sin estructura de secciones. ' +
           'Ingrésalos manualmente en el campo "Orden del Día" del Pre-flight.',
+        required: false,
+        type: 'text',
+        value: '',
+      })
+    }
+
+    // ── Platform detection (informational / fallback warning, non-blocking) ──
+    if (platform.source === 'fallback') {
+      preflight_gaps.push({
+        field: '_platform_config_warning',
+        label: '⚠ Config de plataforma no disponible',
+        description:
+          'No se pudo leer la configuración de plataformas (df_platform_parsing_config). ' +
+          'Se usó la estrategia Hypal por defecto. Si la transcripción es de otra plataforma ' +
+          '(p. ej. TOC/HIF) revisá la conexión; la generación continúa normalmente.',
+        required: false,
+        type: 'text',
+        value: '',
+      })
+    } else {
+      preflight_gaps.push({
+        field: '_platform_detected',
+        label: `Plataforma detectada: ${platform.config.display_name || platform.id}`,
+        description: 'Detección automática por señales del texto (informativo, no editable).',
         required: false,
         type: 'text',
         value: '',
