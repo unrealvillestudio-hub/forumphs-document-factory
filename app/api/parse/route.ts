@@ -197,6 +197,26 @@ export async function POST(req: NextRequest): Promise<NextResponse<ParseResponse
       })
     }
 
+    // ── PR-C §3 — TOC low speaker-mark density warning (non-blocking) ─────────
+    // Prose-paragraph transcriptions with very few turn cues segment coarsely.
+    // If the block count is low relative to the text volume (< 1 block / ~1500
+    // words), tell Ivette the LIMITATION IS THE MATERIAL, not the system.
+    if (platform.config.segmentation === 'prose_paragraph') {
+      const words = (body.transcripcion || '').trim().split(/\s+/).filter(Boolean).length
+      if (words >= 2000 && debates.length < words / 1500) {
+        preflight_gaps.push({
+          field: '_toc_low_density',
+          label: '⚠ Transcripción TOC con baja densidad de marcas de locutor',
+          description:
+            `Segmentación limitada (${debates.length} bloque(s) para ~${words} palabras). ` +
+            'Revisar manualmente o solicitar al proveedor un export con etiquetas de hablante.',
+          required: false,
+          type: 'text',
+          value: '',
+        })
+      }
+    }
+
     // ── Filename ↔ content cross-check (suspicion flags, non-blocking) ───────
     const xcheckGaps = buildCrossCheckGaps(skeleton, body.files_detected || [])
     preflight_gaps.push(...xcheckGaps)

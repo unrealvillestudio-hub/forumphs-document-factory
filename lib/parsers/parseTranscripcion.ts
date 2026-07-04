@@ -334,12 +334,32 @@ function parseProseParagraph(rawText: string, config?: PlatformParsingConfig): D
     starts.push(m.index)
     if (m.index === cueRe.lastIndex) cueRe.lastIndex++ // guard against zero-width
   }
-  if (starts.length === 0) return []
+  if (starts.length === 0) {
+    // No cues at all: don't drop the whole transcript — emit it as one pending
+    // block so the content survives to the ICR/operator instead of vanishing.
+    const seg = text.replace(/\s+/g, ' ').trim()
+    return seg.length >= 4
+      ? [{
+          timestamp: undefined,
+          speaker_raw: seg.slice(0, 60),
+          speaker_name: NAME_PENDIENTE,
+          speaker_role: 'unknown',
+          text_raw: seg,
+          text_cleaned: cleanPreamble(seg).trim() || seg,
+          skip: false,
+        }]
+      : []
+  }
+
+  // PR-C §3 — no text loss: build boundaries starting at 0 so the text BEFORE the
+  // first cue (the opening preamble) becomes its own segment instead of being
+  // dropped. Segments run boundary[i]..boundary[i+1].
+  const boundaries = starts[0] > 0 ? [0, ...starts] : [...starts]
 
   const blocks: DebateBlock[] = []
-  for (let i = 0; i < starts.length; i++) {
-    const from = starts[i]
-    const to = i + 1 < starts.length ? starts[i + 1] : text.length
+  for (let i = 0; i < boundaries.length; i++) {
+    const from = boundaries[i]
+    const to = i + 1 < boundaries.length ? boundaries[i + 1] : text.length
     const seg = text.slice(from, to).replace(/\s+/g, ' ').trim()
     if (!seg) continue
 
