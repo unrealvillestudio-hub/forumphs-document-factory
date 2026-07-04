@@ -5,6 +5,7 @@
  */
 
 import type { DebateBlock } from '../types'
+import type { PlatformParsingConfig } from '../processors/detectPlatform'
 
 // ---- Constants ----
 
@@ -23,9 +24,14 @@ const SKIP_CONTAINS = [
 
 const PREAMBLE_NOISE = /^(okay[,.]?\s+|sí[,.]?\s+|si[,.]?\s+|buenas tardes[,.]?\s+|buenas noches[,.]?\s+|buenas[,.]?\s+|claro[,.]?\s+|perfecto[,.]?\s+|bien[,.]?\s+|mhm[,.]?\s+|este[,.]?\s+|ah[,.]?\s+|eh[,.]?\s+)+/i
 
-// FPH-015: Logistica — Hypal/Zoom coordinators + Daniel Puentes skip
+// FPH-015: Logistica — platform coordinators skipped from the debate.
+// Hypal/Zoom: Daniel Puentes. TOC/HIF: Paula Cebaros + the "HIF" company tag.
+// DEUDA: mover estos nombres a df_platform_parsing_config.extra.logistica_names
+// para no hardcodear coordinadores por plataforma (ver PR description).
+// NOTA: se omite el token suelto 'toc' a propósito — es substring de palabras
+// comunes ("tocó", "protocolo") y provocaría skips espurios.
 const LOGISTICA_NAMES = ['hipal', 'hypal', 'zoom', 'moderador', 'técnico', 'soporte',
-  'daniel puentes', 'daniel p', 'puentes']
+  'daniel puentes', 'daniel p', 'puentes', 'paula cebaros', 'cebaros', 'hif']
 
 // Administration staff — should NOT be labeled as propietario/a
 const ADMIN_NAMES = [
@@ -288,9 +294,87 @@ function consolidate(rawLines: RawLine[]): RawLine[] {
   return merged
 }
 
-// ---- Main export ----
+// ---- TOC / prose-paragraph segmentation ----
 
-export function parseTranscripcion(rawText: string): DebateBlock[] {
+// Fallback turn cues if the config omits them. In TOC prose there is no per-line
+// speaker label; these phrases mark the START of a new speaker's turn.
+const DEFAULT_TURN_CUES = [
+  'mi nombre es', 'buenas tardes a todos', 'buenas noches a todos',
+  'tiene la palabra', 'cede la palabra', 'adelante por favor', 'tiene el micr',
+]
+
+// Self-presentation phrases → the speaker's name follows. Only Title-Case tokens
+// are captured, so "soy propietario del 5B" yields no name (we never guess).
+const NAME_INTRO = /(?:mi nombre es|me llamo|les habla|le habla|soy|habla)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,3})/
+
+const NAME_PENDIENTE = '[NOMBRE PENDIENTE]'
+
+function titleCase(s: string): string {
+  return s.replace(/\b\w/g, c => c.toUpperCase()).trim()
+}
+
+function buildTurnCueRegex(cues: string[]): RegExp | null {
+  const cleaned = (cues || []).map(c => (c || '').trim()).filter(Boolean)
+  if (cleaned.length === 0) return null
+  const alt = cleaned.map(c => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+  return new RegExp(alt, 'gi')
+}
+
+// Segment continuous prose into speaker turns using the platform's turn cues.
+function parseProseParagraph(rawText: string, config?: PlatformParsingConfig): DebateBlock[] {
+  const text = (rawText || '').replace(/\r/g, '')
+  const cueRe = buildTurnCueRegex(config?.turn_cues && config.turn_cues.length ? config.turn_cues : DEFAULT_TURN_CUES)
+  if (!cueRe) return []
+
+  // Locate every cue occurrence; each is the boundary of a new turn.
+  const starts: number[] = []
+  let m: RegExpExecArray | null
+  cueRe.lastIndex = 0
+  while ((m = cueRe.exec(text)) !== null) {
+    starts.push(m.index)
+    if (m.index === cueRe.lastIndex) cueRe.lastIndex++ // guard against zero-width
+  }
+  if (starts.length === 0) return []
+
+  const blocks: DebateBlock[] = []
+  for (let i = 0; i < starts.length; i++) {
+    const from = starts[i]
+    const to = i + 1 < starts.length ? starts[i + 1] : text.length
+    const seg = text.slice(from, to).replace(/\s+/g, ' ').trim()
+    if (!seg) continue
+
+    // Identify the speaker only from an explicit self-presentation near the top.
+    const intro = seg.slice(0, 200).match(NAME_INTRO)
+    const nameFound = intro ? titleCase(intro[1].trim()) : ''
+
+    const speakerRaw = nameFound || seg.slice(0, 60)
+    const speakerName = nameFound || NAME_PENDIENTE
+    // Only run role/gender heuristics on an IDENTIFIED speaker; an unidentified
+    // turn stays 'unknown' so we never invent an identity (ICR/Ivette resolves it).
+    const role = nameFound ? detectRole(speakerRaw, speakerName) : 'unknown'
+    if (role === 'logistica') continue // Paula Cebaros (TOC/HIF) & co. dropped
+
+    const cleaned = cleanPreamble(seg).trim() || seg
+    const { skip, reason } = shouldSkip(cleaned)
+
+    blocks.push({
+      timestamp: undefined, // TOC prose carries no timestamps
+      speaker_raw: speakerRaw,
+      speaker_name: speakerName,
+      speaker_unit: nameFound ? extractUnit(speakerRaw) : undefined,
+      speaker_role: role,
+      text_raw: seg,
+      text_cleaned: cleaned,
+      skip,
+      skip_reason: reason,
+    })
+  }
+  return blocks
+}
+
+// ---- Hypal / speaker-colon segmentation (unchanged behaviour) ----
+
+function parseSpeakerColon(rawText: string): DebateBlock[] {
   const rawLines = parseLines(rawText)
   const consolidated = consolidate(rawLines)
   const blocks: DebateBlock[] = []
@@ -319,12 +403,15 @@ export function parseTranscripcion(rawText: string): DebateBlock[] {
       skip_reason: reason,
     })
   }
+  return blocks
+}
 
-  // ── Dedup DETECTION (mark only, never remove/reorder) ──────────────────────
-  // Marks a block as possible_duplicate when the SAME speaker's near-identical
-  // content reappears NON-adjacently (adjacent turns are already merged by
-  // consolidate). The system marks; Ivette decides against the recording. This
-  // also helps diagnose double Hypal exports. Does NOT alter block count/order.
+// ── Dedup DETECTION (mark only, never remove/reorder) ────────────────────────
+// Marks a block as possible_duplicate when the SAME speaker's near-identical
+// content reappears NON-adjacently. The system marks; Ivette decides against the
+// recording. Runs identically for both segmentation strategies (R5/Bloque-1
+// depends on this flag). Does NOT alter block count/order.
+function markDuplicates(blocks: DebateBlock[]): void {
   for (let i = 0; i < blocks.length; i++) {
     const bi = blocks[i]
     const contentI = normForDup(bi.text_cleaned || bi.text_raw)
@@ -341,6 +428,21 @@ export function parseTranscripcion(rawText: string): DebateBlock[] {
       }
     }
   }
+}
 
+// ---- Main export ----
+
+/**
+ * parseTranscripcion — dispatches on the platform's segmentation strategy.
+ * Default (no config) reproduces the Hypal speaker-colon behaviour exactly, so
+ * existing callers are unaffected. `prose_paragraph` (TOC/HIF) uses cue-based
+ * turn segmentation. Dedup detection runs the same way for both.
+ */
+export function parseTranscripcion(rawText: string, config?: PlatformParsingConfig): DebateBlock[] {
+  const blocks = config?.segmentation === 'prose_paragraph'
+    ? parseProseParagraph(rawText, config)
+    : parseSpeakerColon(rawText)
+
+  markDuplicates(blocks)
   return blocks
 }
