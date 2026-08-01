@@ -32,6 +32,26 @@ Evoluciona el `/api/icr` actual. Cambios vs. hoy:
 % calculado) ya los hace el generador con `numeroALetras` — el agente NO
 recalcula, sólo verifica coherencia y cumplimiento legal interpretativo.
 
+### Regla dura — el personal de plataforma no se narra (decisión Sam, 2026-07-26)
+
+El personal de la plataforma de votación / logística (moderador virtual, soporte
+técnico, operadores — p. ej. Zoom, Hipal/Hypal, TOC/HIF, Daniel Puentes) **NUNCA
+se nombra ni se narra** en el acta: no es compareciente ni interviniente relevante
+al objeto de la asamblea. La apertura/instalación se atribuye por **cargo** a la
+Junta Directiva, nunca al personal de plataforma.
+
+Estado en el código (defensa en profundidad):
+- **`fphs-formalize`** ya descarta los bloques `role === 'logistica'` y los que
+  matchean `LOGISTICA_NAMES` antes de redactar (skip a nivel de bloque).
+- **`BOLD_RULE`** (incluida en `SYS0/1/2`) ahora lo declara **explícitamente**
+  como regla 4, para que la omisión no dependa solo del skip de bloque.
+- ⚠️ **Fuera de este repo:** el **ejemplo canónico ("acta GOAL") de las
+  instrucciones del proyecto** enseñaba lo contrario (*"El señor Daniel Puentes de
+  la empresa Hipal dio la bienvenida…"*). Esa fuente es la más autoritativa que
+  ven el DF y el skill `acta-repair`, y **la corrige Sam en el `.docx`/las
+  instrucciones del proyecto** (no vive en git). Ver `acta-repair` §192 y el
+  session_log de ForumPHs 2026-07-26 en `unrlvl-context`.
+
 ---
 
 ## Mano B — Curaduría visual de imágenes (resuelve Gap 4)

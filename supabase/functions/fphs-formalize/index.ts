@@ -14,6 +14,7 @@ const BOLD_RULE = `FORMATO DE IDENTIFICACIÓN DE INTERVINIENTES (regla obligator
 1. ADMINISTRACIÓN: Formato: "**[Nombre]**, en representación de la administración," NUNCA uses artículo antes del nombre.
 2. PROPIETARIO/A: Formato: "[TRATAMIENTO] **[Nombre completo], propietaria/o de la unidad inmobiliaria [unidad]**,". Para [TRATAMIENTO], DETERMINA el género del interviniente leyendo las marcas gramaticales del texto: artículos y tratamientos ("la propietaria", "doña", "el señor", "don"), y concordancias de adjetivos/participios referidos a la persona ("preocupada", "representado"). Si el texto indica género femenino usa "La señora"; si indica masculino usa "El señor". SOLO si el texto no ofrece ninguna señal de género, usa exactamente "La señora/El señor" (con la barra), que será revisado. Ajusta también "propietaria/o" al género determinado (propietaria / propietario).
 3. JUNTA DIRECTIVA: Usa SOLO el cargo sin nombre propio, sin negrita.
+4. PERSONAL DE PLATAFORMA / LOGÍSTICA (moderador virtual, soporte técnico, operadores de la plataforma de votación — p. ej. Zoom, Hipal/Hypal, TOC/HIF, Daniel Puentes): NUNCA se nombra ni se narra su intervención en el acta. No es compareciente ni interviniente relevante al objeto de la asamblea. Su apertura, bienvenida o instrucciones técnicas NO se redactan. Si el acta debe registrar la instalación, se atribuye por CARGO a la Junta Directiva (regla 3), nunca al personal de plataforma.
 
 NO uses ningún otro formato markdown. NUNCA repitas el nombre si ya apareció en el mismo párrafo.`;
 
