@@ -6,6 +6,10 @@ const P = 5;
 const TRIVIAL_MIN_WORDS = 5;
 const SB_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SB_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+// §3.1 — shared secret that gates this endpoint. Callers (the /api/formalize
+// server proxy and reprocessPending) present it as `x-formalize-secret`. A NEW
+// secret, never reused from forumphs_document_factory or any API key.
+const FORMALIZE_SECRET = Deno.env.get('FPHS_FORMALIZE_SECRET') ?? '';
 
 const LOGISTICA_NAMES = /daniel\s*puentes|daniel\s+p\b|hypal|hipal|moderador\s+virtual/i;
 
@@ -86,41 +90,93 @@ function fallbackFormalize(b: Record<string, string>): string {
   return `${speakerPrefix(b)} realizó una intervención sobre el tema en discusión. [PENDIENTE DE FORMALIZACION — revisar en reproceso]`;
 }
 
-// COST LAYER: fire-and-forget token logging
-function logTokensBatch(inputTokens: number, outputTokens: number, blockCount: number, attempt: number) {
-  if (inputTokens === 0 && outputTokens === 0) return;
-  fetch(`${SB_URL}/rest/v1/ops_token_sessions`, {
-    method: 'POST',
-    headers: {
-      'apikey': SB_KEY,
-      'Authorization': `Bearer ${SB_KEY}`,
-      'Content-Type': 'application/json',
-      'Prefer': 'return=minimal',
-    },
-    body: JSON.stringify({
-      session_type: 'edge_function',
-      model_id: 'claude-sonnet-5',
-      brand_id: 'ForumPHs',
-      lab: 'document-factory',
-      input_tokens: inputTokens,
-      output_tokens: outputTokens,
-      notes: `fphs-formalize: ${blockCount} blocks, attempt ${attempt}`,
-    }),
-  }).catch(() => {});
+// COST LAYER (§3.2 + §3.3) — record real usage in ops_generation_ledger through
+// the ops_log_generation RPC. The ledger resolves the rate from ops_lab_rates
+// (generic claude-sonnet-5, 2/10 hasta 31-ago), so the EF does NOT compute
+// tariffs: rate params are left NULL on purpose. `billable` is not an RPC param
+// and defaults to 'refacturable'. The old target (ops_token_sessions) was
+// retired in T1 and no longer exists — that dead insert is what this replaces.
+//
+// §3.3 — fail LOUD: any failure is logged with status + response body (never the
+// old `.catch(()=>{})` that swallowed everything and left the table empty for
+// months). It still does not throw into the user path.
+async function logLedger(
+  inputUnits: number,
+  outputUnits: number,
+  durationMs: number,
+  jobId: string | null,
+): Promise<void> {
+  if (inputUnits === 0 && outputUnits === 0) return;
+  try {
+    const res = await fetch(`${SB_URL}/rest/v1/rpc/ops_log_generation`, {
+      method: 'POST',
+      headers: {
+        'apikey': SB_KEY,
+        'Authorization': `Bearer ${SB_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        p_lab: 'document-factory',
+        p_brand_id: 'ForumPHs',
+        p_job_id: jobId,
+        p_piece_id: null,
+        p_output_type: 'acta',
+        p_platform: null,
+        p_provider: 'anthropic',
+        p_model_id: 'claude-sonnet-5',
+        p_unit_type: 'tokens_in', // combined token row; RPC resolves in + out
+        p_input_units: inputUnits,
+        p_output_units: outputUnits,
+        // rates NULL → ops_log_generation resolves them from ops_lab_rates.
+        p_status: 'success',
+        p_duration_ms: durationMs,
+        p_agent_name: 'fphs-formalize',
+        p_source_app: 'fphs-document-factory',
+        p_api_key_ref: 'forumphs_document_factory',
+      }),
+    });
+    if (!res.ok) {
+      const bodyText = await res.text().catch(() => '(unreadable body)');
+      console.error(`[fphs-formalize] ledger insert failed: HTTP ${res.status} — ${bodyText}`);
+    }
+  } catch (err) {
+    console.error('[fphs-formalize] ledger network error:', err);
+  }
 }
 
 Deno.serve(async (req: Request) => {
+  const startedAt = Date.now();
   const C = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'content-type',
+    'Access-Control-Allow-Headers': 'content-type, x-formalize-secret',
     'Access-Control-Allow-Methods': 'POST, OPTIONS'
   };
   if (req.method === 'OPTIONS') return new Response(null, { headers: C });
+
+  // §3.1 — CLOSE THE PUBLIC ENDPOINT. Only callers presenting the shared secret
+  // may run. If the secret is not configured, fail CLOSED (never fall open to
+  // public access). The browser Console reaches us via the /api/formalize proxy,
+  // which holds the secret; a stranger with only the URL is now rejected.
+  if (!FORMALIZE_SECRET) {
+    console.error('[fphs-formalize] FPHS_FORMALIZE_SECRET is not set in the function environment; rejecting all requests.');
+    return new Response(
+      JSON.stringify({ error: 'server misconfigured' }),
+      { status: 503, headers: { ...C, 'Content-Type': 'application/json' } }
+    );
+  }
+  if (req.headers.get('x-formalize-secret') !== FORMALIZE_SECRET) {
+    return new Response(
+      JSON.stringify({ error: 'unauthorized' }),
+      { status: 401, headers: { ...C, 'Content-Type': 'application/json' } }
+    );
+  }
 
   try {
     const body = await req.json();
     const blocks = body.blocks;
     const attempt = typeof body.retry_attempt === 'number' ? body.retry_attempt : 0;
+    // §3.2 — job_id if present in the request (threaded into the ledger row).
+    const jobId = typeof body.job_id === 'string' ? body.job_id : null;
 
     if (!blocks || !Array.isArray(blocks)) return new Response(
       JSON.stringify({ error: 'blocks required' }),
@@ -228,7 +284,10 @@ Deno.serve(async (req: Request) => {
       await Promise.allSettled(blocks.slice(i, i + P).map((b: Record<string, string>, j: number) => run(b, i + j)));
     }
 
-    logTokensBatch(totalInputTokens, totalOutputTokens, blocks.length, attempt);
+    // §3.4 reliability — await the ledger write so the row is committed before
+    // the isolate can be reclaimed after the response returns. Single insert;
+    // negligible latency, and failures are logged (never swallowed).
+    await logLedger(totalInputTokens, totalOutputTokens, Date.now() - startedAt, jobId);
 
     return new Response(JSON.stringify({
       success: true, blocks: r, retry_attempt: attempt,

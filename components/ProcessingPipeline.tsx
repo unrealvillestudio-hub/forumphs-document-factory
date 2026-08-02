@@ -20,8 +20,10 @@ interface ChunkStatus {
   error?: string
 }
 
-// Supabase Edge Function URL
-const EDGE_FN_URL = 'https://amlvyycfepwhiindxgzw.supabase.co/functions/v1/fphs-formalize'
+// Server proxy in front of the fphs-formalize Edge Function (T3 §3.1).
+// The browser NEVER calls the EF directly anymore: the EF now requires a shared
+// secret the browser cannot hold. /api/formalize (server-side) attaches it.
+const EDGE_FN_URL = '/api/formalize'
 const CHUNK_SIZE = 15  // blocks per Edge Function call
 // Barrido único: retryAttempt is the fixed level (0|1|2), not a retry counter.
 const SWEEP_NAMES = ['mínimo', 'intermedio', 'literal']

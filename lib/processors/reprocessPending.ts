@@ -17,10 +17,7 @@
  */
 
 import type { DebateBlock } from '../types'
-
-const EF_URL =
-  process.env.FPHS_FORMALIZE_URL ||
-  'https://amlvyycfepwhiindxgzw.supabase.co/functions/v1/fphs-formalize'
+import { callFormalizeEF } from '../server/formalizeClient'
 
 const PENDING_MARKER = '[PENDIENTE DE FORMALIZACION'
 const REPROCESS_REASONS = new Set(['fallback', 'template'])
@@ -40,12 +37,13 @@ export function isPendingBlock(b: DebateBlock): boolean {
 
 async function callEF(blocks: DebateBlock[], retry_attempt: number): Promise<DebateBlock[] | null> {
   try {
-    const res = await fetch(EF_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ blocks, retry_attempt }),
-      signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
-    })
+    // Trusted server loop: attach the shared secret and hit the EF directly via
+    // the shared client (bypasses the /api/formalize rate limiter by design —
+    // T3 §3.1, "impide al desconocido, no al bucle propio").
+    const res = await callFormalizeEF(
+      { blocks, retry_attempt },
+      { signal: AbortSignal.timeout(CALL_TIMEOUT_MS) },
+    )
     if (!res.ok) return null
     const data = await res.json()
     if (!data || data.success !== true || !Array.isArray(data.blocks)) return null
