@@ -119,8 +119,12 @@ Responde ÚNICAMENTE JSON válido sin texto adicional:
         "anthropic-version": "2023-06-01"
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 4000,
+        model: "claude-sonnet-5",
+        // PR-C §5 — Sonnet 5. thinking disabled; sin temperature/top_p/top_k
+        // (Sonnet 5 los rechaza, incluso temperature: 0 da 400). max_tokens
+        // 4000 -> 5200 (+30% para el nuevo tokenizer).
+        thinking: { type: "disabled" },
+        max_tokens: 5200,
         messages: [{ role: "user", content: prompt }]
       })
     });

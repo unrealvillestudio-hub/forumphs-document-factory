@@ -74,7 +74,16 @@ async function generateNarrative(
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 700, messages: [{ role: 'user', content: prompt }] })
+    body: JSON.stringify({
+      model: 'claude-sonnet-5',
+      // PR-C §5 — Sonnet 5. thinking disabled (redacción determinista; mantiene
+      // los thinking tokens fuera de max_tokens). max_tokens 700 -> 910 (+30%
+      // para el nuevo tokenizer, ~30% más tokens/texto). Sin temperature/top_p/
+      // top_k: el endpoint de Sonnet 5 los rechaza (incluso temperature: 0 da 400).
+      thinking: { type: 'disabled' },
+      max_tokens: 910,
+      messages: [{ role: 'user', content: prompt }]
+    })
   });
   if (!r.ok) throw new Error(`Claude ${r.status}`);
   const d2 = await r.json();
