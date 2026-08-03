@@ -6,6 +6,65 @@ const CORS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS"
 };
 
+const SB_URL = Deno.env.get("SUPABASE_URL") ?? "";
+const SB_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+
+// COST LAYER (T5 §5.2 + §5.3) — registra el consumo real en ops_generation_ledger
+// vía la RPC ops_log_generation. Antes esta EF no registraba nada: consumía
+// tokens (max_tokens 5200) sin dejar asiento. Comparte lab='document-factory'
+// con fphs-formalize (mismo propósito: producción del acta); source_app la
+// distingue en el Dashboard. El ledger resuelve la tarifa por model_id, así que
+// los rate params van NULL.
+//
+// §5.3 — fail LOUD: se await el insert y todo fallo se loguea con status + body.
+// No lanza al path del usuario.
+async function logLedger(
+  inputUnits: number,
+  outputUnits: number,
+  durationMs: number,
+): Promise<void> {
+  if (!SB_URL || !SB_KEY) {
+    console.error("[fphs-icr-apply] SUPABASE_URL/SERVICE_ROLE_KEY ausentes; no se puede escribir al ledger.");
+    return;
+  }
+  if (inputUnits === 0 && outputUnits === 0) return;
+  try {
+    const res = await fetch(`${SB_URL}/rest/v1/rpc/ops_log_generation`, {
+      method: "POST",
+      headers: {
+        "apikey": SB_KEY,
+        "Authorization": `Bearer ${SB_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        p_lab: "document-factory",
+        p_brand_id: "ForumPHs",
+        p_job_id: null,
+        p_piece_id: null,
+        p_output_type: "icr_apply",
+        p_platform: null,
+        p_provider: "anthropic",
+        p_model_id: "claude-sonnet-5",
+        p_unit_type: "tokens_in", // fila combinada; la RPC resuelve in + out
+        p_input_units: inputUnits,
+        p_output_units: outputUnits,
+        // rates NULL → ops_log_generation resuelve desde ops_lab_rates.
+        p_status: "success",
+        p_duration_ms: durationMs,
+        p_agent_name: "fphs-icr-apply",
+        p_source_app: "fphs-icr-apply",
+        p_api_key_ref: "forumphs_document_factory",
+      }),
+    });
+    if (!res.ok) {
+      const bodyText = await res.text().catch(() => "(unreadable body)");
+      console.error(`[fphs-icr-apply] ledger insert failed: HTTP ${res.status} — ${bodyText}`);
+    }
+  } catch (err) {
+    console.error("[fphs-icr-apply] ledger network error:", err);
+  }
+}
+
 interface ICRFinding {
   id: string;
   severity: string;
@@ -32,6 +91,7 @@ interface Block {
 }
 
 Deno.serve(async (req) => {
+  const startedAt = Date.now();
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
 
   try {
@@ -131,6 +191,9 @@ Responde ÚNICAMENTE JSON válido sin texto adicional:
 
     if (!res.ok) throw new Error("Claude API " + res.status);
     const apiData = await res.json();
+    // §5.1 — capturar usage de la respuesta (antes se descartaba).
+    const inputTokens = apiData.usage?.input_tokens ?? 0;
+    const outputTokens = apiData.usage?.output_tokens ?? 0;
     const raw = (apiData.content || [])
       .filter((c: { type: string }) => c.type === "text")
       .map((c: { text: string }) => c.text)
@@ -161,6 +224,10 @@ Responde ÚNICAMENTE JSON válido sin texto adicional:
         detail.push({ block_index: idx, finding_id: c.finding_id });
       }
     }
+
+    // §5.4 fiabilidad — await el ledger antes de responder, para que la fila
+    // quede committeada antes de que el isolate pueda reclamarse.
+    await logLedger(inputTokens, outputTokens, Date.now() - startedAt);
 
     return new Response(JSON.stringify({
       success: true,

@@ -42,20 +42,60 @@ function inferFase(meses: number): string {
   return 'FASE_III';
 }
 
-function logTokens(input: number, output: number, notes: string) {
-  if (!SB_URL || !SB_KEY) return;
-  fetch(`${SB_URL}/rest/v1/ops_token_sessions`, {
-    method: 'POST',
-    headers: {
-      'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`,
-      'Content-Type': 'application/json', 'Prefer': 'return=minimal'
-    },
-    body: JSON.stringify({
-      session_type: 'edge_function', model_id: 'claude-sonnet-4-6',
-      brand_id: 'ForumPHs', lab: 'document-factory',
-      input_tokens: input, output_tokens: output, notes
-    })
-  }).catch(() => {});
+// COST LAYER (T5 §5.2 + §5.3) — registra el consumo real en ops_generation_ledger
+// vía la RPC ops_log_generation. Reemplaza el insert zombi a ops_token_sessions
+// (tabla retirada; su fet(...).catch(()=>{}) fire-and-forget dejó el consumo sin
+// registrar). El ledger resuelve la tarifa desde ops_lab_rates por model_id
+// (claude-sonnet-5), así que los rate params van NULL a propósito. lab='fphs-bi'
+// y source_app='fphs-bi-report' permiten cortar el Dashboard por producto FPHS.
+//
+// §5.3 — fail LOUD: se await el insert y cualquier fallo se loguea con status +
+// body (nunca el viejo .catch(()=>{})). No lanza al path del usuario.
+async function logLedger(
+  inputUnits: number,
+  outputUnits: number,
+  durationMs: number,
+): Promise<void> {
+  if (!SB_URL || !SB_KEY) {
+    console.error('[fphs-bi-report] SUPABASE_URL/SERVICE_ROLE_KEY ausentes; no se puede escribir al ledger.');
+    return;
+  }
+  if (inputUnits === 0 && outputUnits === 0) return;
+  try {
+    const res = await fetch(`${SB_URL}/rest/v1/rpc/ops_log_generation`, {
+      method: 'POST',
+      headers: {
+        'apikey': SB_KEY,
+        'Authorization': `Bearer ${SB_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        p_lab: 'fphs-bi',
+        p_brand_id: 'ForumPHs',
+        p_job_id: null,
+        p_piece_id: null,
+        p_output_type: 'informe_bi',
+        p_platform: null,
+        p_provider: 'anthropic',
+        p_model_id: 'claude-sonnet-5',
+        p_unit_type: 'tokens_in', // fila combinada; la RPC resuelve in + out
+        p_input_units: inputUnits,
+        p_output_units: outputUnits,
+        // rates NULL → ops_log_generation resuelve desde ops_lab_rates.
+        p_status: 'success',
+        p_duration_ms: durationMs,
+        p_agent_name: 'fphs-bi-report',
+        p_source_app: 'fphs-bi-report',
+        p_api_key_ref: 'forumphs_document_factory',
+      }),
+    });
+    if (!res.ok) {
+      const bodyText = await res.text().catch(() => '(unreadable body)');
+      console.error(`[fphs-bi-report] ledger insert failed: HTTP ${res.status} — ${bodyText}`);
+    }
+  } catch (err) {
+    console.error('[fphs-bi-report] ledger network error:', err);
+  }
 }
 
 async function generateNarrative(
@@ -95,6 +135,7 @@ async function generateNarrative(
 }
 
 Deno.serve(async (req: Request) => {
+  const startedAt = Date.now();
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
   const json = (data: unknown, status = 200) =>
     new Response(JSON.stringify(data), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
@@ -164,7 +205,9 @@ Deno.serve(async (req: Request) => {
     const { text: narrativa, inputTokens, outputTokens } = await generateNarrative(
       String(building.name), periodo, kpis, moraUnits
     );
-    logTokens(inputTokens, outputTokens, `fphs-bi-report: ${building.name} ${periodo}`);
+    // §5.4 fiabilidad — await el ledger antes de armar la respuesta, para que la
+    // fila quede committeada antes de que el isolate pueda reclamarse.
+    await logLedger(inputTokens, outputTokens, Date.now() - startedAt);
 
     const informeRes = await fphsUpsert('informes', {
       building_id, periodo: periodo + '-01', tipo: 'mensual',
