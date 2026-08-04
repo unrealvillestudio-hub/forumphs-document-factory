@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { generateFIEHtml } from '@/lib/fie/template'
 import type { FIESchema } from '@/lib/fie/schema'
+import { logLedger } from '@/lib/server/ledger'
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
 
@@ -45,8 +46,8 @@ Lineamientos por panel:
 // ── POST handler ─────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
-    const body: { schema: FIESchema } = await req.json()
-    const { schema } = body
+    const body: { schema: FIESchema; job_id?: string } = await req.json()
+    const { schema, job_id } = body
 
     if (!schema?.building_name) {
       return NextResponse.json({ error: 'Schema FIE inválido o incompleto' }, { status: 400 })
@@ -67,6 +68,7 @@ export async function POST(req: NextRequest) {
     // ── Generar narrativa con Claude ──────────────────────────
     let narrative: FIESchema['narrative'] = {}
 
+    const startedAt = Date.now()
     try {
       const res = await fetch(ANTHROPIC_API_URL, {
         method: 'POST',
@@ -76,8 +78,13 @@ export async function POST(req: NextRequest) {
           'anthropic-version': '2023-06-01',
         },
         body: JSON.stringify({
-          model:      'claude-sonnet-4-20250514',
-          max_tokens: 1000,
+          // PR-C §5 — Sonnet 5 (claude-sonnet-4-20250514 retirado). thinking disabled
+          // (redacción determinista; mantiene los thinking tokens fuera de max_tokens);
+          // sin temperature/top_p/top_k (el endpoint de Sonnet 5 los rechaza, incluso
+          // temperature: 0 da 400); max_tokens 1000 -> 1300 (+30% para el tokenizer nuevo).
+          model:      'claude-sonnet-5',
+          thinking:   { type: 'disabled' },
+          max_tokens: 1300,
           messages: [{ role: 'user', content: narrativePrompt(schema) }],
         }),
       })
@@ -86,6 +93,25 @@ export async function POST(req: NextRequest) {
         const data = await res.json()
         const text = data.content?.[0]?.text ?? '{}'
         narrative  = JSON.parse(text.replace(/```json|```/g, '').trim())
+        // Instrumentación (patrón T5/T6): registra el consumo real. FIE usa
+        // ANTHROPIC_API_KEY (no forumphs_document_factory) => superficie de costo
+        // separada. lab='fie', source_app='fphs-fie-generate'. await + fail-loud
+        // (status+body) los aporta logLedger; no lanza al path del usuario.
+        await logLedger({
+          lab:         'fie',
+          sourceApp:   'fphs-fie-generate',
+          modelId:     'claude-sonnet-5',
+          inputUnits:  data.usage?.input_tokens  ?? 0,
+          outputUnits: data.usage?.output_tokens ?? 0,
+          jobId:       job_id ?? null,
+          outputType:  'informe_fie',
+          durationMs:  Date.now() - startedAt,
+          status:      'success',
+          apiKeyRef:   'ANTHROPIC_API_KEY',
+        })
+      } else {
+        const errBody = await res.text().catch(() => '(unreadable)')
+        console.error(`[FIE generate] Claude HTTP ${res.status}: ${errBody}`)
       }
     } catch (narrativeErr) {
       // Narrativa falla: continuar sin ella (HTML igual válido)
