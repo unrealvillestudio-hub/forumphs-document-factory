@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import * as XLSX from 'xlsx'
+import { logLedger } from '@/lib/server/ledger'
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
 
@@ -75,6 +76,7 @@ export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData()
     const file     = formData.get('file') as File | null
+    const jobId    = (formData.get('job_id') as string | null) ?? null
 
     if (!file) {
       return NextResponse.json({ error: 'No se recibió archivo' }, { status: 400 })
@@ -94,13 +96,13 @@ export async function POST(req: NextRequest) {
     } else if (name.endsWith('.pdf')) {
       // PDF: enviar como base64 a Claude con vision
       const base64 = buffer.toString('base64')
-      return await parsePDF(base64, name)
+      return await parsePDF(base64, name, jobId)
     } else {
       return NextResponse.json({ error: 'Formato no soportado (.xlsx, .xls, .csv, .pdf)' }, { status: 400 })
     }
 
     // ── Llamar a Claude para normalizar ──────────────────────
-    const schema = await normalizeWithClaude(rawText, name)
+    const schema = await normalizeWithClaude(rawText, name, jobId)
     return NextResponse.json({ schema, raw_preview: rawText.slice(0, 800) })
 
   } catch (err: unknown) {
@@ -113,10 +115,11 @@ export async function POST(req: NextRequest) {
 }
 
 // ── PDF via Claude vision ────────────────────────────────────────
-async function parsePDF(base64: string, filename: string) {
+async function parsePDF(base64: string, filename: string, jobId: string | null) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY no configurada')
 
+  const startedAt = Date.now()
   const res = await fetch(ANTHROPIC_API_URL, {
     method: 'POST',
     headers: {
@@ -125,8 +128,11 @@ async function parsePDF(base64: string, filename: string) {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model:      'claude-sonnet-4-20250514',
-      max_tokens: 2000,
+      // PR-C §5 — Sonnet 5 (claude-sonnet-4-20250514 retirado). thinking disabled;
+      // sin temperature/top_p/top_k (Sonnet 5 los rechaza); max_tokens 2000 -> 2600 (+30%).
+      model:      'claude-sonnet-5',
+      thinking:   { type: 'disabled' },
+      max_tokens: 2600,
       messages: [
         {
           role: 'user',
@@ -145,18 +151,35 @@ async function parsePDF(base64: string, filename: string) {
     }),
   })
 
-  if (!res.ok) throw new Error(`Anthropic API error ${res.status}`)
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '(unreadable)')
+    console.error(`[FIE parse:pdf] Claude HTTP ${res.status}: ${errBody}`)
+    throw new Error(`Anthropic API error ${res.status}`)
+  }
   const data = await res.json()
   const text = data.content?.[0]?.text ?? '{}'
   const schema = JSON.parse(text.replace(/```json|```/g, '').trim())
+  await logLedger({
+    lab:         'fie',
+    sourceApp:   'fphs-fie-parse',
+    modelId:     'claude-sonnet-5',
+    inputUnits:  data.usage?.input_tokens  ?? 0,
+    outputUnits: data.usage?.output_tokens ?? 0,
+    jobId,
+    outputType:  'fie_parse_pdf',
+    durationMs:  Date.now() - startedAt,
+    status:      'success',
+    apiKeyRef:   'ANTHROPIC_API_KEY',
+  })
   return NextResponse.json({ schema, raw_preview: 'PDF procesado con Claude Vision' })
 }
 
 // ── Normalizar texto con Claude ──────────────────────────────────
-async function normalizeWithClaude(rawText: string, filename: string) {
+async function normalizeWithClaude(rawText: string, filename: string, jobId: string | null) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY no configurada')
 
+  const startedAt = Date.now()
   const res = await fetch(ANTHROPIC_API_URL, {
     method: 'POST',
     headers: {
@@ -165,8 +188,11 @@ async function normalizeWithClaude(rawText: string, filename: string) {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model:      'claude-sonnet-4-20250514',
-      max_tokens: 2000,
+      // PR-C §5 — Sonnet 5 (claude-sonnet-4-20250514 retirado). thinking disabled;
+      // sin temperature/top_p/top_k (Sonnet 5 los rechaza); max_tokens 2000 -> 2600 (+30%).
+      model:      'claude-sonnet-5',
+      thinking:   { type: 'disabled' },
+      max_tokens: 2600,
       messages: [
         {
           role: 'user',
@@ -176,9 +202,25 @@ async function normalizeWithClaude(rawText: string, filename: string) {
     }),
   })
 
-  if (!res.ok) throw new Error(`Anthropic API error ${res.status}`)
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '(unreadable)')
+    console.error(`[FIE parse:xlsx] Claude HTTP ${res.status}: ${errBody}`)
+    throw new Error(`Anthropic API error ${res.status}`)
+  }
   const data   = await res.json()
   const text   = data.content?.[0]?.text ?? '{}'
   const schema = JSON.parse(text.replace(/```json|```/g, '').trim())
+  await logLedger({
+    lab:         'fie',
+    sourceApp:   'fphs-fie-parse',
+    modelId:     'claude-sonnet-5',
+    inputUnits:  data.usage?.input_tokens  ?? 0,
+    outputUnits: data.usage?.output_tokens ?? 0,
+    jobId,
+    outputType:  'fie_parse_xlsx',
+    durationMs:  Date.now() - startedAt,
+    status:      'success',
+    apiKeyRef:   'ANTHROPIC_API_KEY',
+  })
   return schema
 }
