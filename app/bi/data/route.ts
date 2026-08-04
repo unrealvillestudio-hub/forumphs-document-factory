@@ -16,7 +16,12 @@ async function db(table: string, params: string) {
     },
     cache: 'no-store',
   })
-  if (!res.ok) return null
+  if (!res.ok) {
+    // fail-loud: no tragues el status. Un 401/403 (clave sin permiso) NO es "sin datos".
+    const body = await res.text().catch(() => '(unreadable)')
+    console.error(`[bi/data] ${table} query HTTP ${res.status}: ${body}`)
+    return null
+  }
   const text = await res.text()
   return text ? JSON.parse(text) : null
 }
@@ -40,11 +45,39 @@ export async function GET(req: NextRequest) {
   })()
 
   try {
-    // 1. Edificio
-    const buildings = await db('buildings',
-      `id=eq.${building_id}&select=id,name,total_units,tier,tarifa_base&limit=1`)
+    // 1. Edificio — fail-loud: distinguir id inexistente de RLS/clave sin service_role.
+    // Consulta directa (no via db()) para capturar el status de PostgREST.
+    const bRes = await fetch(
+      `${FPHS_URL}/rest/v1/buildings?id=eq.${building_id}&select=id,name,total_units,tier,tarifa_base&limit=1`,
+      { headers: { apikey: FPHS_KEY, Authorization: `Bearer ${FPHS_KEY}` }, cache: 'no-store' },
+    )
+    if (!bRes.ok) {
+      const body = await bRes.text().catch(() => '(unreadable)')
+      console.error(`[bi/data] buildings query FALLÓ: HTTP ${bRes.status} building_id=${building_id} — ${body}`)
+      return NextResponse.json(
+        { error: `Fallo consultando buildings (HTTP ${bRes.status}). Revisar FPHS_SERVICE_KEY / RLS — no es un id inexistente.`, building_id, postgrest_status: bRes.status },
+        { status: 502 },
+      )
+    }
+    const buildings = JSON.parse((await bRes.text()) || '[]')
     const building = buildings?.[0]
-    if (!building) return NextResponse.json({ error: 'Edificio no encontrado' }, { status: 404 })
+    if (!building) {
+      // 200 + [] : o el id no existe, o RLS con clave sin service_role oculta la tabla entera.
+      // Probe sin filtro para desambiguar.
+      const probeRes = await fetch(`${FPHS_URL}/rest/v1/buildings?select=id&limit=1`,
+        { headers: { apikey: FPHS_KEY, Authorization: `Bearer ${FPHS_KEY}` }, cache: 'no-store' })
+      const probe = probeRes.ok ? JSON.parse((await probeRes.text()) || '[]') : null
+      const tablaVisible = Array.isArray(probe) && probe.length > 0
+      if (!tablaVisible) {
+        console.error(`[bi/data] buildings devuelve 0 filas SIN filtro (probe HTTP ${probeRes.status}) building_id=${building_id}: RLS activo + FPHS_SERVICE_KEY sin service_role oculta la tabla entera.`)
+        return NextResponse.json(
+          { error: 'buildings no es visible con la clave actual (0 filas sin filtro). Causa probable: FPHS_SERVICE_KEY no es service_role y RLS bloquea la lectura. NO es un id inexistente.', building_id, probe_status: probeRes.status },
+          { status: 502 },
+        )
+      }
+      console.error(`[bi/data] building_id=${building_id} no existe (buildings visible, ${probe.length}+ filas sin filtro).`)
+      return NextResponse.json({ error: 'Edificio no encontrado', building_id }, { status: 404 })
+    }
 
     // 2. KPIs del período
     const kpisRows = await db('monthly_kpis',
