@@ -409,6 +409,7 @@ export default function DocumentFactoryPage() {
             skeleton={parsed.skeleton}
             onComplete={handleFormalized}
             retryAttempt={sweepLevel}
+            jobId={actaRunId}
           />
         )}
 
