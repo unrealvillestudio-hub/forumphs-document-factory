@@ -11,7 +11,12 @@
  * costLedger no debe coexistir con este escritor: al reconciliar esa rama, se
  * elimina costLedger.ts y su import en /api/generate (ver PR T6, §6.5).
  *
- * Env (§6.2): SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY, server-side, SIN NEXT_PUBLIC_.
+ * Env (T6b): UNRLVL_SUPABASE_URL + unrlvl_service_role, server-side, SIN NEXT_PUBLIC_.
+ * Son los nombres que existen en el proyecto Vercel desde el 4-jul (los genéricos
+ * SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY NO existen ahí — leerlos dejaba al escritor
+ * en su rama de fail-loud, sin asientos). Mismos nombres que usa detectPlatform.ts
+ * para la misma DB UNRLVL. Sin fallback: dos nombres para un valor fue la causa del
+ * fallo, no se replica.
  * El service_role key nunca debe llegar al bundle del cliente: este módulo es
  * server-only (no importar desde un Client Component).
  *
@@ -19,8 +24,8 @@
  * pasan rate params (rate_in/out van NULL y el costo lo calcula la RPC).
  */
 
-const SB_URL = process.env.SUPABASE_URL ?? ''
-const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? ''
+const SB_URL = process.env.UNRLVL_SUPABASE_URL ?? ''
+const SB_KEY = process.env.unrlvl_service_role ?? ''
 
 export interface LedgerEntry {
   /** Carril de costo (ej. 'document-factory'). */
@@ -50,7 +55,7 @@ export interface LedgerEntry {
  */
 export async function logLedger(e: LedgerEntry): Promise<void> {
   if (!SB_URL || !SB_KEY) {
-    console.error('[ledger] SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY ausentes; no se escribe al ledger.')
+    console.error('[ledger] UNRLVL_SUPABASE_URL/unrlvl_service_role ausentes; no se escribe al ledger.')
     return
   }
   // En success sin unidades no hay nada que costear. Un status='error' SÍ se
