@@ -15,6 +15,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import type { ExtractedImage } from '@/lib/types'
+import { logLedger } from '@/lib/server/ledger'
 
 export interface ImageDecision {
   index: number                          // index into the original images array
@@ -50,6 +51,7 @@ RESPONDE ÚNICAMENTE con JSON válido, sin markdown.`
 export async function curateImages(
   images: ExtractedImage[],
   context: string,
+  jobId?: string | null,
 ): Promise<CurationResult> {
   const empty: CurationResult = { decisions: [], included: [], excluded_count: 0, curated: false }
   if (!images || images.length === 0) return { ...empty, curated: true }
@@ -57,6 +59,10 @@ export async function curateImages(
   const apiKey = process.env.forumphs_document_factory || process.env.ANTHROPIC_API_KEY
   if (!apiKey) return empty  // no key → caller falls back
 
+  const startedAt = Date.now()
+  // usage se hoista para poder registrar el consumo (status='error') si la visión
+  // respondió pero algo posterior falló (§6.4).
+  let usage: { input_tokens: number; output_tokens: number } | null = null
   try {
     const client = new Anthropic({ apiKey })
 
@@ -94,6 +100,8 @@ export async function curateImages(
       messages: [{ role: 'user', content }],
     })
 
+    usage = msg.usage ? { input_tokens: msg.usage.input_tokens, output_tokens: msg.usage.output_tokens } : null
+
     const raw = msg.content.filter((c): c is Anthropic.TextBlock => c.type === 'text').map(c => c.text).join('').trim()
     const clean = raw.replace(/```json\n?|\n?```/g, '').trim()
     const parsed = JSON.parse(clean) as { decisions: ImageDecision[] }
@@ -104,9 +112,42 @@ export async function curateImages(
       .sort((a, b) => (a.order ?? 999) - (b.order ?? 999))
     const excluded_count = decisions.filter(d => d.decision === 'EXCLUDE').length
 
+    // §6.2/§6.3 — asiento con el consumo real de la visión, agrupado por acta (job_id).
+    await logLedger({
+      lab: 'document-factory',
+      sourceApp: 'fphs-image-curation',
+      modelId: 'claude-sonnet-5',
+      inputUnits: usage?.input_tokens ?? 0,
+      outputUnits: usage?.output_tokens ?? 0,
+      jobId,
+      outputType: 'image_curation',
+      durationMs: Date.now() - startedAt,
+      status: 'success',
+      apiKeyRef: 'forumphs_document_factory',
+    })
+
     return { decisions, included, excluded_count, curated: true }
   } catch (e) {
     console.error('Image curation failed (non-fatal, caller falls back):', e)
+    // §6.4 — si la visión consumió tokens y falló después (p. ej. JSON.parse),
+    // registramos el consumo con status='error' en vez de perderlo. No cambia el
+    // fallback del caller (curated:false → incluir por nombre de archivo).
+    if (usage) {
+      console.error(`[fphs-image-curation] fallo tras consumir tokens (in=${usage.input_tokens}, out=${usage.output_tokens}); registrando asiento status=error.`)
+      await logLedger({
+        lab: 'document-factory',
+        sourceApp: 'fphs-image-curation',
+        modelId: 'claude-sonnet-5',
+        inputUnits: usage.input_tokens,
+        outputUnits: usage.output_tokens,
+        jobId,
+        outputType: 'image_curation',
+        durationMs: Date.now() - startedAt,
+        status: 'error',
+        errorMsg: e instanceof Error ? e.message : String(e),
+        apiKeyRef: 'forumphs_document_factory',
+      })
+    }
     return empty
   }
 }

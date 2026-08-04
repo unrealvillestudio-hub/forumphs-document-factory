@@ -56,6 +56,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       formalizedBlocks: DebateBlock[]
     } = body
     const icrFindings: ICRFinding[] = body.icr_findings || []
+    // §6.3 — identificador del acta, propagado a curateImages (único consumidor de
+    // modelo en esta ruta) para agrupar su asiento por acta. /api/generate no llama
+    // al modelo: sólo reenvía el id.
+    const jobId: string | null = typeof body.job_id === 'string' ? body.job_id : null
     // Re-run sweep index — relaxes QA tolerance progressively (see qaScanner)
     const attempt: number = typeof body.attempt === 'number' ? body.attempt : 0
     const {
@@ -619,7 +623,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateRespo
       // (curated:false), fall back to rendering all images (legacy behavior).
       const ctxForCuration = (parsed.votations || []).map(v => `Votación: ${v.topic}`).join('; ') ||
         `Asamblea de ${phName}`
-      const curation = await curateImages(docImages, ctxForCuration)
+      const curation = await curateImages(docImages, ctxForCuration, jobId)
 
       // Build the render list: [image, caption] pairs.
       type RenderImg = { img: typeof docImages[number]; caption: string }

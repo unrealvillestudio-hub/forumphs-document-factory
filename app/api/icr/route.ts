@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import type { ParsedHypalZip } from '@/lib/types'
 import { loadAdminPersonnel, adminPersonnelToPromptList } from '@/lib/processors/actaConfig'
+import { logLedger } from '@/lib/server/ledger'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -65,12 +66,18 @@ SEVERIDADES:
 RESPONDE ÚNICAMENTE con JSON válido, sin markdown:`
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  const startedAt = Date.now()
+  let jobId: string | null = null
+  // usage se hoista para poder registrar un asiento status='error' con las
+  // unidades consumidas si el modelo respondió pero algo posterior falló (§6.4).
+  let usage: { input_tokens: number; output_tokens: number } | null = null
   try {
     const client = new Anthropic({
       apiKey: process.env.forumphs_document_factory || process.env.ANTHROPIC_API_KEY
     })
 
-    const { acta_text, parsed }: { acta_text: string; parsed: ParsedHypalZip } = await req.json()
+    const { acta_text, parsed, job_id }: { acta_text: string; parsed: ParsedHypalZip; job_id?: string } = await req.json()
+    jobId = typeof job_id === 'string' ? job_id : null
 
     if (!acta_text || acta_text.trim().length < 100) {
       return NextResponse.json({ success: false, error: 'acta_text too short or empty — generate the document first' }, { status: 400 })
@@ -135,6 +142,8 @@ Responde SOLO con este JSON:
       }],
     })
 
+    usage = msg.usage ? { input_tokens: msg.usage.input_tokens, output_tokens: msg.usage.output_tokens } : null
+
     const raw = msg.content.filter((c): c is Anthropic.TextBlock => c.type === 'text').map(c => c.text).join('').trim()
     const clean = raw.replace(/```json\n?|\n?```/g, '').trim()
     const data: ICRReport = JSON.parse(clean)
@@ -150,9 +159,45 @@ Responde SOLO con este JSON:
       findings,
     }
 
+    // §6.2/§6.3 — asiento de éxito con las unidades reales, agrupado por acta (job_id).
+    await logLedger({
+      lab: 'document-factory',
+      sourceApp: 'fphs-icr',
+      modelId: 'claude-sonnet-5',
+      inputUnits: usage?.input_tokens ?? 0,
+      outputUnits: usage?.output_tokens ?? 0,
+      jobId,
+      outputType: 'icr_audit',
+      durationMs: Date.now() - startedAt,
+      status: 'success',
+      apiKeyRef: 'forumphs_document_factory',
+    })
+
     return NextResponse.json({ success: true, report })
   } catch (err) {
     console.error('ICR error:', err)
+    // §6.4 — el catch devuelve un informe de respaldo con success:true para no
+    // bloquear la descarga (decisión de producto correcta). Eso vuelve INVISIBLE
+    // un fallo que ya consumió tokens. Si el modelo alcanzó a responder (usage
+    // capturado), registramos un asiento status='error' con las unidades
+    // consumidas — sin cambiar el comportamiento hacia el usuario — más un
+    // console.error explícito.
+    if (usage) {
+      console.error(`[fphs-icr] fallo tras consumir tokens (in=${usage.input_tokens}, out=${usage.output_tokens}); registrando asiento status=error.`)
+      await logLedger({
+        lab: 'document-factory',
+        sourceApp: 'fphs-icr',
+        modelId: 'claude-sonnet-5',
+        inputUnits: usage.input_tokens,
+        outputUnits: usage.output_tokens,
+        jobId,
+        outputType: 'icr_audit',
+        durationMs: Date.now() - startedAt,
+        status: 'error',
+        errorMsg: err instanceof Error ? err.message : String(err),
+        apiKeyRef: 'forumphs_document_factory',
+      })
+    }
     // Return a safe fallback report instead of 500 — never block the user's download
     const fallbackReport: ICRReport = {
       verdict: 'APPROVED_WITH_NOTES',
