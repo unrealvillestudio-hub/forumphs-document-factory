@@ -8,6 +8,8 @@ interface ProcessingPipelineProps {
   skeleton?: { agenda_items?: { number: number; title: string }[] }
   onComplete: (formalizedBlocks: DebateBlock[]) => void
   retryAttempt?: number
+  /** §6.3 — id del acta; viaja como job_id a la EF fphs-formalize en cada chunk. */
+  jobId?: string | null
 }
 
 interface ChunkStatus {
@@ -29,7 +31,7 @@ const CHUNK_SIZE = 15  // blocks per Edge Function call
 const SWEEP_NAMES = ['mínimo', 'intermedio', 'literal']
 const sweepName = (n: number) => SWEEP_NAMES[n] ?? String(n)
 
-export default function ProcessingPipeline({ blocks, skeleton, onComplete, retryAttempt = 0 }: ProcessingPipelineProps) {
+export default function ProcessingPipeline({ blocks, skeleton, onComplete, retryAttempt = 0, jobId = null }: ProcessingPipelineProps) {
   const [chunks, setChunks] = useState<ChunkStatus[]>([])
   const [done, setDone] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -88,7 +90,7 @@ export default function ProcessingPipeline({ blocks, skeleton, onComplete, retry
               res = await fetch(EDGE_FN_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ blocks: chunkBlocks, retry_attempt: retryAttempt }),
+                body: JSON.stringify({ blocks: chunkBlocks, retry_attempt: retryAttempt, job_id: jobId }),
               })
               if (res.status !== 503) break
               await new Promise(r => setTimeout(r, 1500 * (attempt + 1)))

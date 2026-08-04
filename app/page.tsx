@@ -75,12 +75,19 @@ export default function DocumentFactoryPage() {
   const [sweepStarted, setSweepStarted] = useState(false)
   // R5 — aviso temprano no-bloqueante de posibles duplicados marcados por el parser.
   const [dedupWarning, setDedupWarning] = useState<string | null>(null)
+  // §6.3 — identificador único de la corrida (acta). Se genera UNA vez al iniciar
+  // una corrida (handleDataReady) y sobrevive los reintentos del reproceso
+  // (regenerate NO lo re-mintea). Viaja como job_id a formalize/generate/icr para
+  // agrupar todos los asientos del ledger por acta — el costo por pieza que hoy no sale.
+  const [actaRunId, setActaRunId] = useState<string | null>(null)
 
   const activeIdx = PHASES.findIndex(p => p.keys.includes(step))
 
   // ── 1 · Upload → /api/parse ──────────────────────────────────────────────
   const handleDataReady = async (data: ExtractedData) => {
     setStep('parsing'); setError(''); setDedupWarning(null)
+    // §6.3 — nueva corrida ⇒ nuevo id de acta (una sola vez; persiste por regenerate).
+    setActaRunId(crypto.randomUUID())
     try {
       const payload = JSON.stringify({
         resumen:         data.resumen,
@@ -197,6 +204,7 @@ export default function DocumentFactoryPage() {
           formalizedBlocks: blocks,
           icr_findings: findings,
           attempt: sweepLevel,
+          job_id: actaRunId,
         }),
       })
       const json = (await res.json()) as GenerateResponse
@@ -219,7 +227,7 @@ export default function DocumentFactoryPage() {
       const res = await fetch('/api/icr', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ acta_text: gen.acta_text, parsed }),
+        body: JSON.stringify({ acta_text: gen.acta_text, parsed, job_id: actaRunId }),
       })
       const json = (await res.json()) as { success: boolean; report?: ICRReport; error?: string }
       if (json.report) {
@@ -296,7 +304,7 @@ export default function DocumentFactoryPage() {
     setStep('upload'); setParsed(null); setGaps([]); setPreflight(null)
     setIcrReport(null); setIcrLoading(false)
     setGen(null); setError(''); setSweepLevel(0); setSweepStarted(false)
-    setDedupWarning(null)
+    setDedupWarning(null); setActaRunId(null)
   }
 
   // Barrido único: "regenerar" vuelve al selector de nivel (re-elegir el mismo u
@@ -401,6 +409,7 @@ export default function DocumentFactoryPage() {
             skeleton={parsed.skeleton}
             onComplete={handleFormalized}
             retryAttempt={sweepLevel}
+            jobId={actaRunId}
           />
         )}
 
