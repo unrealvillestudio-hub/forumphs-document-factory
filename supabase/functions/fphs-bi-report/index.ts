@@ -18,7 +18,10 @@ async function fphs<T>(path: string): Promise<T> {
   const r = await fetch(`${FPHS_URL}/rest/v1/${path}`, {
     headers: { 'apikey': FPHS_KEY, 'Authorization': `Bearer ${FPHS_KEY}` }
   });
-  if (!r.ok) throw new Error(`FPHS ${path}: ${r.status}`);
+  if (!r.ok) {
+    const body = await r.text().catch(() => '');
+    throw new Error(`FPHS ${path}: ${r.status} ${body}`.trim());
+  }
   return r.json() as Promise<T>;
 }
 
@@ -149,7 +152,18 @@ Deno.serve(async (req: Request) => {
 
     const buildings = await fphs<Array<Record<string, unknown>>>(`buildings?id=eq.${building_id}&select=id,name,total_units`);
     const building = buildings[0];
-    if (!building) return json({ error: 'Edificio no encontrado' }, 404);
+    if (!building) {
+      // fail-loud: 200 + [] es id inexistente O RLS con FPHS_SERVICE_KEY sin service_role
+      // ocultando la tabla entera. Probe sin filtro para desambiguar (antes: 404 idéntico).
+      const probe = await fphs<Array<Record<string, unknown>>>(`buildings?select=id&limit=1`).catch(() => null);
+      const tablaVisible = Array.isArray(probe) && probe.length > 0;
+      if (!tablaVisible) {
+        console.error(`[fphs-bi-report] buildings devuelve 0 filas SIN filtro building_id=${building_id}: RLS + FPHS_SERVICE_KEY sin service_role oculta la tabla entera.`);
+        return json({ error: 'buildings no es visible con la clave actual (0 filas sin filtro). Causa probable: FPHS_SERVICE_KEY no es service_role y RLS bloquea la lectura. NO es un id inexistente.', building_id }, 502);
+      }
+      console.error(`[fphs-bi-report] building_id=${building_id} no existe (buildings visible).`);
+      return json({ error: 'Edificio no encontrado', building_id }, 404);
+    }
 
     const units = await fphs<Array<Record<string, string>>>(`units?building_id=eq.${building_id}&select=id,unit_code`);
     const totalUnidades = units.length;
