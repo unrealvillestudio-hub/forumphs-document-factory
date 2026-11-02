@@ -7,6 +7,7 @@ const TABS = [
   { href: '/',    label: 'Actas'      },
   { href: '/bi',  label: 'Informe BI' },
   { href: '/fie', label: 'Suite FIE'  },
+  { href: '/bizdev', label: 'BizDev'  },
 ] as const
 
 export default function NavTabs() {
@@ -89,6 +90,9 @@ export default function NavTabs() {
           50%      { opacity:.5; transform:scale(0.65); }
         }
 
+        /* Pantallas angostas: la versión se oculta para dar espacio a las tabs */
+        @media (max-width: 520px) { .nav-version { display: none; } }
+
         @media (prefers-reduced-motion: reduce) {
           .fphs-glow-am, .fphs-glow-terra { animation: none; }
           body::before { display: none; }
@@ -110,6 +114,8 @@ export default function NavTabs() {
         borderBottom: '1px solid rgba(92,52,114,0.3)',
         display: 'flex', alignItems: 'center',
         padding: '0 20px', gap: '2px',
+        /* Con 4 tabs la barra no cabe en 390 px: se desplaza en horizontal en vez de desbordar la página */
+        overflowX: 'auto', scrollbarWidth: 'none',
       }}>
 
         {/* Shimmer line — guiño de calidad en el top edge del nav */}
@@ -169,7 +175,7 @@ export default function NavTabs() {
         })}
 
         {/* Version */}
-        <div style={{
+        <div className="nav-version" style={{
           marginLeft: 'auto',
           fontFamily: "'Cinzel', serif",
           fontSize: '8px', letterSpacing: '0.18em',

@@ -1,0 +1,56 @@
+/**
+ * /api/bizdev/prospects
+ *   GET   → lista de prospectos con sus cotizaciones y comunicaciones (más recientes primero).
+ *   POST  → crea un prospecto. El código FPHS-P-NNNN lo asigna la base.
+ *   PATCH → { id, etapa?, proxima_accion?, proxima_fecha?, notas?, contacto_nombre?, contacto_rol? }.
+ */
+import { sb, errorResponse, ETAPAS } from '@/lib/bizdev/db'
+
+export const dynamic = 'force-dynamic'
+
+const EDITABLES = ['short_name', 'full_name', 'unidades', 'm2_privados', 'es_casas', 'fuente_tamano',
+  'clase_evidencia', 'etapa', 'contacto_nombre', 'contacto_rol', 'proxima_accion', 'proxima_fecha', 'notas'] as const
+
+function pick(body: Record<string, unknown>) {
+  const out: Record<string, unknown> = {}
+  for (const k of EDITABLES) if (k in body) out[k] = body[k] === '' ? null : body[k]
+  if ('etapa' in out && !ETAPAS.includes(out.etapa as typeof ETAPAS[number])) {
+    throw new Error(`etapa inválida: ${String(out.etapa)}`)
+  }
+  return out
+}
+
+export async function GET() {
+  try {
+    const rows = await sb(
+      'fphs_prospects?select=*,quotes:fphs_quotes(*),comms:fphs_prospect_comms(*)' +
+      '&order=updated_at.desc&quotes.order=created_at.desc&comms.order=fecha.desc')
+    return Response.json({ prospects: rows })
+  } catch (e) { return errorResponse(e) }
+}
+
+export async function POST(req: Request) {
+  try {
+    const body = await req.json() as Record<string, unknown>
+    const row = pick(body)
+    if (!row.short_name || typeof row.short_name !== 'string') throw new Error('short_name es obligatorio')
+    const [created] = await sb<unknown[]>('fphs_prospects', {
+      method: 'POST', body: JSON.stringify(row), prefer: 'return=representation',
+    })
+    return Response.json({ prospect: created }, { status: 201 })
+  } catch (e) { return errorResponse(e) }
+}
+
+export async function PATCH(req: Request) {
+  try {
+    const body = await req.json() as Record<string, unknown>
+    const id = String(body.id ?? '')
+    if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error('id inválido')
+    const row = { ...pick(body), updated_at: new Date().toISOString() }
+    const [updated] = await sb<unknown[]>(`fphs_prospects?id=eq.${id}`, {
+      method: 'PATCH', body: JSON.stringify(row), prefer: 'return=representation',
+    })
+    if (!updated) return Response.json({ error: 'prospecto no encontrado' }, { status: 404 })
+    return Response.json({ prospect: updated })
+  } catch (e) { return errorResponse(e) }
+}
