@@ -8,7 +8,7 @@
  * El prototipo del Fee-Calculator es referencia de función y cálculo, no de estilo.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   calcular, TIER_NOMBRES, REF_MARGIN_INDEX, tierPorPrecio,
   type FeeParams, type PersonalExtra, type Tier, type Contratacion,
@@ -672,6 +672,11 @@ function Propuesta({ params, result, sel, setSel, ph, u, m2, casas, extra, prosp
   const a = letterAmounts(params, input)
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
+  // Evita guardar dos veces la misma propuesta (medido 2026-11-02: un doble guardado creó 2 cotizaciones y 2 comunicaciones).
+  const lock = useRef(false)
+  const saveKey = JSON.stringify([prospect?.id ?? '', sel, u, m2, casas, extra, params.version])
+  const [savedKey, setSavedKey] = useState<string | null>(null)
+  const yaGuardada = savedKey === saveKey
 
   const copiar = async () => {
     try { await navigator.clipboard.writeText(text); setStatus('Texto copiado.') }
@@ -687,7 +692,8 @@ function Propuesta({ params, result, sel, setSel, ph, u, m2, casas, extra, prosp
     } catch (e) { onError(e instanceof Error ? e.message : 'Error generando .docx') }
   }
   const guardarEnviada = async () => {
-    if (!prospect) return
+    if (!prospect || lock.current || yaGuardada) return
+    lock.current = true
     setBusy(true); onError(null)
     try {
       const { quote } = await api<{ quote: Quote }>('/api/bizdev/quotes', {
@@ -696,9 +702,10 @@ function Propuesta({ params, result, sel, setSel, ph, u, m2, casas, extra, prosp
         }),
       })
       await api('/api/bizdev/quotes', { method: 'PATCH', body: JSON.stringify({ id: quote.id, estado: 'enviada' }) })
+      setSavedKey(saveKey)
       setStatus(`Guardada como enviada: $${usd(Number(quote.honorario))} en la línea de tiempo de ${prospect.short_name}.`)
       await onSaved()
-    } catch (e) { onError(e instanceof Error ? e.message : 'Error guardando') } finally { setBusy(false) }
+    } catch (e) { onError(e instanceof Error ? e.message : 'Error guardando') } finally { setBusy(false); lock.current = false }
   }
 
   return (
@@ -721,9 +728,9 @@ function Propuesta({ params, result, sel, setSel, ph, u, m2, casas, extra, prosp
       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
         <button style={btn(true)} onClick={copiar}>Copiar texto</button>
         <button style={btn(false)} onClick={descargar}>Descargar .docx</button>
-        <button style={btn(true, !!prospect && !busy)} disabled={!prospect || busy} onClick={guardarEnviada}
+        <button style={btn(true, !!prospect && !busy && !yaGuardada)} disabled={!prospect || busy || yaGuardada} onClick={guardarEnviada}
           title={prospect ? '' : 'Elige un prospecto en la Calculadora para registrar el envío'}>
-          {busy ? 'Guardando…' : 'Guardar como enviada'}
+          {busy ? 'Guardando…' : yaGuardada ? 'Guardada ✓' : 'Guardar como enviada'}
         </button>
         <span role="status" style={{ fontSize: '12px', color: C.muted }}>
           {status || (!prospect && 'Para guardar, elige un prospecto en la Calculadora.')}

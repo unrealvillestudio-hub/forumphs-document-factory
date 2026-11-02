@@ -156,3 +156,19 @@ test('v1.3 — Plaza 77 sin doble conteo del costo por PH, escenarios A y D', ()
   near(d.honorarios, [4280.30, 4586.04, 4938.81, 5350.38])
   near([a.honorarios[1] * P13.itbms, a.conItbms[1]], [107.90, 1649.30])
 })
+
+test('centavos: el total con ITBMS es la suma exacta de las líneas de la carta (v1.3 y v1.1)', () => {
+  const r13 = calcular(P13, { u: 60, m2: 7065.19, casas: false })
+  assert.equal(r13.conItbms[1], 1649.30)
+  const t13 = buildLetter({ ph: 'P.H. Plaza 77', u: 60, m2: 7065.19, casas: false, result: r13, sel: 1, itbms: P13.itbms }, P13)
+  assert.match(t13, /Honorario mensual de administración: \$1,541\.40\nITBMS \(7 %\): \$107\.90\nTotal mensual: \$1,649\.30/)
+  const r11 = calcular(P, { u: 60, m2: 7065.19, casas: false })
+  assert.equal(r11.conItbms[1], 1606.83)
+  for (const pp of [P, P12, P13]) for (const u of [60, 143, 312]) {
+    const r = calcular(pp, { u, m2: u * 110, casas: false, extra: [planilla(0.5, 900)] })
+    r.honorarios.forEach((h, i) => {
+      const a = Math.round(h * 100) / 100, it = Math.round(a * pp.itbms * 100) / 100
+      assert.equal(r.conItbms[i], Math.round((a + it) * 100) / 100, `${pp.version} u=${u} i=${i}`)
+    })
+  }
+})

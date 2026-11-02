@@ -202,7 +202,9 @@ export function calcular(p: FeeParams, input: FeeInput): FeeResult {
 
   const honorariosBase = p.margenes.map(m => (base + costoPorPh) / (1 - m))
   const honorarios = p.margenes.map(m => costo / (1 - m))
-  const conItbms = honorarios.map(h => h * (1 + p.itbms))
+  // Total con ITBMS = honorario en centavos + ITBMS en centavos: lo mismo que suma la carta línea a línea
+  // (medido 2026-11-02: sin esto se guardó 1649.29 mientras la carta mostraba 1,541.40 + 107.90).
+  const conItbms = honorarios.map(h => { const c = cents(h); return cents(c + cents(c * p.itbms)) })
 
   const refIdx = Math.min(REF_MARGIN_INDEX, p.margenes.length - 1)
   const tierUnidades = tierPorUnidades(p, u)
