@@ -8,7 +8,7 @@
  *     (se presenta como «tier + personal adicional a solicitud de la Junta»).
  */
 import { Document, Packer, Paragraph, TextRun, AlignmentType } from 'docx'
-import { TIER_NOMBRES, tierPorPrecio, type FeeResult, type FeeParams } from './feeModel'
+import { TIER_NOMBRES, tierPorPrecio, cents, type FeeResult, type FeeParams } from './feeModel'
 
 /**
  * Servicios incluidos en todos los tiers.
@@ -58,11 +58,12 @@ export interface LetterAmounts {
 
 /** Tier con que se presenta: el del precio base al margen elegido, nunca «bajo el piso». */
 export function letterAmounts(params: Pick<FeeParams, 'tiers'>, i: LetterInput): LetterAmounts {
-  const base = i.result.honorariosBase[i.sel]
-  const honorario = i.result.honorarios[i.sel]
-  const t = Math.max(1, tierPorPrecio(params as FeeParams, base)) as 1 | 2 | 3
-  const it = honorario * i.itbms
-  return { tier: TIER_NOMBRES[t], base, adicional: honorario - base, honorario, itbms: it, total: honorario + it }
+  // Todo en centavos: cada línea de la carta es un monto redondeado y el total es su suma exacta.
+  const base = cents(i.result.honorariosBase[i.sel])
+  const honorario = cents(i.result.honorarios[i.sel])
+  const t = Math.max(1, tierPorPrecio(params as FeeParams, i.result.honorariosBase[i.sel])) as 1 | 2 | 3
+  const it = cents(honorario * i.itbms)
+  return { tier: TIER_NOMBRES[t], base, adicional: cents(honorario - base), honorario, itbms: it, total: cents(honorario + it) }
 }
 
 /** Párrafos de la carta, en orden. Una línea vacía separa bloques. */
