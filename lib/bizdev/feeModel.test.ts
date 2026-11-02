@@ -115,3 +115,32 @@ test('carta: sin margen ni costos ni personal incluido; personal agregado como l
   assert.match(sinExtra, /Total mensual: \$1,606\.83/)
   assert.doesNotMatch(sinExtra, /Personal adicional/)
 })
+
+// ── v1.2 (2026-11-02): + $50 fijos por PH (servicio de carga de planillas, informado por Ivette) ──
+const P12 = normalizeParams({ ...P, version: 'v1.2', costo_por_ph: 50 } as unknown as Record<string, unknown>)
+
+test('v1.1 sin columna costo_por_ph equivale a 0', () => {
+  assert.equal(P.costo_por_ph, 0)
+})
+
+test('v1.2 — Plaza 77 con $50 por PH, escenarios A y D', () => {
+  const a = calcular(P12, { u: 60, m2: 7065.19, casas: false })
+  near(a.honorarios, [1468.27, 1573.14, 1694.15, 1835.33])
+  near(a.honorariosBase, a.honorarios)
+  near([a.costo], [1101.20])
+  const d = calcular(P12, { u: 60, m2: 7065.19, casas: false, extra: [planilla(0.5, 900), planilla(1, 1100)] })
+  near(d.honorarios, [4309.93, 4617.79, 4973.00, 5387.42])
+})
+
+test('v1.2 — carta al 30 %: $1,573.14 + ITBMS $110.12 = $1,683.26, sin mencionar el costo por PH', () => {
+  const r = calcular(P12, { u: 60, m2: 7065.19, casas: false })
+  const txt = buildLetter({ ph: 'P.H. Plaza 77', u: 60, m2: 7065.19, casas: false, result: r, sel: 1, itbms: P12.itbms }, P12)
+  assert.match(txt, /Honorario mensual de administración: \$1,573\.14/)
+  assert.match(txt, /ITBMS \(7 %\): \$110\.12/)
+  assert.match(txt, /Total mensual: \$1,683\.26/)
+  assert.doesNotMatch(txt, /planilla|\$50\b/i)
+})
+
+test('costo_por_ph negativo falla en voz alta', () => {
+  assert.throws(() => normalizeParams({ ...P, costo_por_ph: -1 } as unknown as Record<string, unknown>), /costo_por_ph/)
+})

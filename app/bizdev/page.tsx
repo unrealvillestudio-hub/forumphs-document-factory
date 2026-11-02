@@ -519,6 +519,7 @@ function Calculadora(props: {
     ['  Parte unidades', `$${usd(r.parteUnidades)}`],
     ['  Personal incluido (costo directo)', `$${usd(r.costoIncluidas)}`],
     ['  Aporte a la estructura central', `$${usd(r.base - r.costoIncluidas)}`],
+    ['Costo fijo por PH (carga de planillas)', `$${usd(r.costoPorPh)}`],
     ['Personal agregado (costo directo)', `$${usd(r.extraCosto)}`],
     ['Costo total del PH', `$${usd(r.costo)}`],
     ['Costo de referencia', `$${usd(r.cm2, 4)}/m² · $${usd(r.cu)}/ud.`],

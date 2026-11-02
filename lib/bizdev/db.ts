@@ -39,9 +39,9 @@ export async function sb<T = unknown>(path: string, init: RequestInit & { prefer
   return (text ? JSON.parse(text) : null) as T
 }
 
-/** Fila vigente de fphs_fee_params: la de valid_from más reciente. */
+/** Fila vigente de fphs_fee_params: la de valid_from más reciente; a igual fecha, la última creada. */
 export async function currentParamsRow(): Promise<Record<string, unknown>> {
-  const rows = await sb<Record<string, unknown>[]>('fphs_fee_params?select=*&order=valid_from.desc&limit=1')
+  const rows = await sb<Record<string, unknown>[]>('fphs_fee_params?select=*&order=valid_from.desc,created_at.desc&limit=1')
   if (!rows?.length) throw new DbError('fphs_fee_params está vacía: no hay parámetros vigentes.', 500)
   return rows[0]
 }

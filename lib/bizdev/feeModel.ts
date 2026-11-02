@@ -16,7 +16,9 @@
  *   personas_calc = max(u/cap_unidades, m2/cap_m2, piso)  (en casas, sin el término de m²)
  *   incluidas     = max(piso, round(personas_calc·2)/2)
  *   costo_persona = salario·(1 + carga) en planilla · salario en servicios profesionales
- *   honorario(m)  = (base + Σ extra) / (1 − m)
+ *   costo_por_ph  = costo directo fijo por cada PH administrado (p. ej. servicio de carga de planillas;
+ *                   0 en v1.1, $50 desde v1.2)
+ *   honorario(m)  = (base + costo_por_ph + Σ extra) / (1 − m)
  */
 
 export interface TierThresholds {
@@ -42,6 +44,8 @@ export interface FeeParams {
   salario_std: number
   carga_planilla: number
   itbms: number
+  /** Costo directo fijo por cada PH administrado (US$/mes). 0 si la versión no lo define. */
+  costo_por_ph: number
   margenes: number[]
   tiers: TierThresholds
   fuente?: string
@@ -85,6 +89,7 @@ export interface FeeResult {
   personasCalc: number
   incluidas: number
   costoIncluidas: number
+  costoPorPh: number
   extraCosto: number
   extraPersonas: number
   costo: number
@@ -122,6 +127,9 @@ export function normalizeParams(row: Record<string, unknown>): FeeParams {
     if (!Number.isFinite(v)) throw new Error(`fphs_fee_params.${k} inválido: ${String(row[k])}`)
     out[k] = v
   }
+  // costo_por_ph: columna añadida en 05_bizdev_costo_por_ph.sql; ausente o nula (v1.1) = 0. Si existe, debe ser válida.
+  const cph = row.costo_por_ph == null ? 0 : num(row.costo_por_ph)
+  if (!(cph >= 0)) throw new Error(`fphs_fee_params.costo_por_ph inválido: ${String(row.costo_por_ph)}`)
   const margenes = Array.isArray(row.margenes) ? (row.margenes as unknown[]).map(num) : []
   if (!margenes.length || margenes.some(m => !(m >= 0 && m < 1))) {
     throw new Error(`fphs_fee_params.margenes inválido: ${JSON.stringify(row.margenes)}`)
@@ -135,7 +143,8 @@ export function normalizeParams(row: Record<string, unknown>): FeeParams {
   return {
     version: String(row.version),
     valid_from: row.valid_from ? String(row.valid_from) : undefined,
-    ...(out as unknown as Omit<FeeParams, 'version' | 'margenes' | 'tiers'>),
+    ...(out as unknown as Omit<FeeParams, 'version' | 'margenes' | 'tiers' | 'costo_por_ph'>),
+    costo_por_ph: cph,
     margenes,
     tiers: {
       unidades: t.unidades!.map(num) as [number, number],
@@ -188,9 +197,10 @@ export function calcular(p: FeeParams, input: FeeInput): FeeResult {
 
   const extraCosto = extra.reduce((s, r) => s + r.personas * costoPersona(p, r.salario, r.tipo), 0)
   const extraPersonas = extra.reduce((s, r) => s + r.personas, 0)
-  const costo = base + extraCosto
+  const costoPorPh = p.costo_por_ph ?? 0
+  const costo = base + costoPorPh + extraCosto
 
-  const honorariosBase = p.margenes.map(m => base / (1 - m))
+  const honorariosBase = p.margenes.map(m => (base + costoPorPh) / (1 - m))
   const honorarios = p.margenes.map(m => costo / (1 - m))
   const conItbms = honorarios.map(h => h * (1 + p.itbms))
 
@@ -220,7 +230,7 @@ export function calcular(p: FeeParams, input: FeeInput): FeeResult {
     params_version: p.version,
     cm2, cu, costoPersona: cpStd, mixto, costoPiso, base, pisoAplica: costoPiso > mixto,
     parteM2, parteUnidades, personasCalc, incluidas, costoIncluidas: incluidas * cpStd,
-    extraCosto, extraPersonas, costo,
+    costoPorPh, extraCosto, extraPersonas, costo,
     margenes: [...p.margenes], honorariosBase, honorarios, conItbms,
     tierUnidades, tierM2, tierPrecioBase, tierPH, avisos,
   }
