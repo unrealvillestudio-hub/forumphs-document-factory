@@ -144,3 +144,15 @@ test('v1.2 — carta al 30 %: $1,573.14 + ITBMS $110.12 = $1,683.26, sin mencion
 test('costo_por_ph negativo falla en voz alta', () => {
   assert.throws(() => normalizeParams({ ...P, costo_por_ph: -1 } as unknown as Record<string, unknown>), /costo_por_ph/)
 })
+
+// ── v1.3 (2026-11-02): los $50 de los 8 PH actuales salen del costo repartido (ya estaban en los EEFF) ──
+const P13 = normalizeParams({ ...P, version: 'v1.3', costo_total: 18521.60, costo_por_ph: 50 } as unknown as Record<string, unknown>)
+
+test('v1.3 — Plaza 77 sin doble conteo del costo por PH, escenarios A y D', () => {
+  const a = calcular(P13, { u: 60, m2: 7065.19, casas: false })
+  near(a.honorarios, [1438.64, 1541.40, 1659.97, 1798.30])
+  near([a.base], [1028.98])
+  const d = calcular(P13, { u: 60, m2: 7065.19, casas: false, extra: [planilla(0.5, 900), planilla(1, 1100)] })
+  near(d.honorarios, [4280.30, 4586.04, 4938.81, 5350.38])
+  near([a.honorarios[1] * P13.itbms, a.conItbms[1]], [107.90, 1649.30])
+})
