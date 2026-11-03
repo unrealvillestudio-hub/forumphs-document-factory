@@ -260,16 +260,46 @@ function Badge({ text, color, solid = false }: { text: string; color: string; so
   )
 }
 
+// ─── Filtro por periodo (Sam, 2026-11-03: «este mes, mes pasado y calendario desde-hasta») ───
+type Modo = 'todo' | 'mes' | 'mes_pasado' | 'rango'
+const isoLocal = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+/** Rango [desde, hasta] en fechas locales YYYY-MM-DD; null = sin filtro. */
+function rangoDe(modo: Modo, desde: string, hasta: string): [string, string] | null {
+  const h = new Date()
+  if (modo === 'mes') return [isoLocal(new Date(h.getFullYear(), h.getMonth(), 1)), isoLocal(new Date(h.getFullYear(), h.getMonth() + 1, 0))]
+  if (modo === 'mes_pasado') return [isoLocal(new Date(h.getFullYear(), h.getMonth() - 1, 1)), isoLocal(new Date(h.getFullYear(), h.getMonth(), 0))]
+  if (modo === 'rango' && (desde || hasta)) return [desde || '0000-01-01', hasta || '9999-12-31']
+  return null
+}
+/** Fecha local (YYYY-MM-DD) de un timestamp o de una fecha. */
+const diaLocal = (s: string) => (s.length === 10 ? s : isoLocal(new Date(s)))
+const enRango = (s: string | null | undefined, r: [string, string] | null) =>
+  !r || (!!s && diaLocal(s) >= r[0] && diaLocal(s) <= r[1])
+const fmtRango = (r: [string, string]) => {
+  const f = (d: string) => d.startsWith('0000') || d.startsWith('9999') ? '…' : fmtFecha(d)
+  return `${f(r[0])} – ${f(r[1])}`
+}
+
 function Dashboard({ params, prospects, onOpen, onReload, onError }: {
   params: FeeParams; prospects: Prospect[]; onOpen: (id: string) => void
   onReload: () => Promise<void>; onError: (e: string | null) => void
 }) {
   const hoy = hoyISO()
   const hace30 = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10)
+  const [modo, setModo] = useState<Modo>('todo')
+  const [desde, setDesde] = useState('')
+  const [hasta, setHasta] = useState('')
+  const rango = rangoDe(modo, desde, hasta)
+  // Con periodo: un prospecto entra si se creó, se cotizó o tuvo una comunicación dentro del rango.
+  const enPeriodo = rango
+    ? prospects.filter(p => enRango(p.created_at, rango) || p.quotes.some(q => enRango(q.created_at, rango)) || p.comms.some(c => enRango(c.fecha, rango)))
+    : prospects
   const activos = prospects.filter(p => !INACTIVAS.has(p.etapa))
-  const cotizados = activos.filter(p => p.quotes[0])
+  // Cartera: última cotización de cada activo; con periodo, solo si esa cotización es del rango.
+  const cotizados = activos.filter(p => p.quotes[0] && enRango(p.quotes[0].created_at, rango))
   const cartera = cotizados.reduce((s, p) => s + Number(p.quotes[0].honorario), 0)
-  const enviadas30 = prospects.flatMap(p => p.quotes).filter(q => q.estado === 'enviada' && q.enviada_el && q.enviada_el >= hace30).length
+  const enviadas30 = prospects.flatMap(p => p.quotes)
+    .filter(q => q.estado === 'enviada' && q.enviada_el && (rango ? enRango(q.enviada_el, rango) : q.enviada_el >= hace30)).length
   const ganados = prospects.filter(p => p.etapa === 'ganado').length
   const perdidos = prospects.filter(p => p.etapa === 'perdido').length
   const vencidas = activos.filter(p => p.proxima_fecha && p.proxima_fecha < hoy).length
@@ -297,25 +327,51 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
   type Kpi = { k: string; v: string; sub: string; color: string; hero?: boolean }
   const kpis: Kpi[] = [
     { k: 'Cartera cotizada / mes', v: cotizados.length ? `$${usd(cartera)}` : '—', hero: true, color: C.terra,
-      sub: cotizados.length ? `${cotizados.length} prospecto(s) con cotización · sin ITBMS` : 'Sin cotizaciones guardadas todavía' },
+      sub: cotizados.length ? `${cotizados.length} prospecto(s) con cotización · sin ITBMS` : rango ? 'Sin cotizaciones en el periodo' : 'Sin cotizaciones guardadas todavía' },
     { k: 'Prospectos activos', v: String(activos.length), color: C.amatistaLight, sub: `${prospects.length} en total` },
-    { k: 'Propuestas enviadas', v: String(enviadas30), color: C.parch, sub: 'últimos 30 días' },
+    { k: 'Propuestas enviadas', v: String(enviadas30), color: C.parch, sub: rango ? 'en el periodo' : 'últimos 30 días' },
     { k: 'Tasa de cierre', v: ganados + perdidos ? `${Math.round((ganados / (ganados + perdidos)) * 100)} %` : '—', color: C.success,
       sub: `${ganados} ganado(s) · ${perdidos} perdido(s)` },
     { k: 'Acciones vencidas', v: String(vencidas), color: vencidas > 0 ? C.danger : C.muted,
       sub: vencidas > 0 ? 'requieren seguimiento' : 'todo al día' },
   ]
 
-  const lista = (filtro ? prospects.filter(p => p.etapa === filtro) : prospects)
+  const lista = (filtro ? enPeriodo.filter(p => p.etapa === filtro) : enPeriodo)
     .slice().sort((a, b) => ETAPAS.findIndex(e => e.key === b.etapa) - ETAPAS.findIndex(e => e.key === a.etapa))
   const acciones = activos.filter(p => p.proxima_fecha || p.proxima_accion)
     .slice().sort((a, b) => (a.proxima_fecha ?? '9999').localeCompare(b.proxima_fecha ?? '9999'))
-  const actividad = prospects.flatMap(p => p.comms.map(c => ({ c, p })))
+  const actividad = prospects.flatMap(p => p.comms.filter(c => enRango(c.fecha, rango)).map(c => ({ c, p })))
     .sort((a, b) => b.c.fecha.localeCompare(a.c.fecha)).slice(0, 6)
-  const maxEtapa = Math.max(1, ...ETAPAS.map(e => prospects.filter(p => p.etapa === e.key).length))
+  const maxEtapa = Math.max(1, ...ETAPAS.map(e => enPeriodo.filter(p => p.etapa === e.key).length))
+  const MODOS: [Modo, string][] = [['todo', 'Todo'], ['mes', 'Este mes'], ['mes_pasado', 'Mes pasado'], ['rango', 'Personalizado']]
 
   return (
     <>
+      {/* ── Periodo ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }} role="group" aria-label="Periodo">
+        <span style={{ ...cinzel(C.label, 8) }}>Periodo</span>
+        <div style={{ display: 'inline-flex', border: `1px solid ${C.line}`, borderRadius: '8px', overflow: 'hidden' }}>
+          {MODOS.map(([m, l]) => (
+            <button key={m} onClick={() => setModo(m)} aria-pressed={modo === m}
+              style={{ padding: '7px 12px', border: 'none', cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", fontSize: '12px', fontWeight: 600,
+                background: modo === m ? C.terra : 'rgba(14,16,24,0.55)', color: modo === m ? C.cream : C.muted,
+                borderRight: m !== 'rango' ? `1px solid ${C.line}` : 'none' }}>
+              {l}
+            </button>
+          ))}
+        </div>
+        {modo === 'rango' && (
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+            <label htmlFor="per-desde" style={{ fontSize: '12px', color: C.muted }}>Desde</label>
+            <input id="per-desde" type="date" value={desde} max={hasta || undefined} onChange={e => setDesde(e.target.value)} style={{ ...numInput, width: 'auto', fontSize: '12px', padding: '6px 8px', colorScheme: 'dark' }} />
+            <label htmlFor="per-hasta" style={{ fontSize: '12px', color: C.muted }}>Hasta</label>
+            <input id="per-hasta" type="date" value={hasta} min={desde || undefined} onChange={e => setHasta(e.target.value)} style={{ ...numInput, width: 'auto', fontSize: '12px', padding: '6px 8px', colorScheme: 'dark' }} />
+          </div>
+        )}
+        {rango && <span style={{ fontFamily: MONO, fontSize: '12px', color: C.gold }}>{fmtRango(rango)}</span>}
+        {rango && <span style={{ fontSize: '11px', color: C.muted }}>Activos, tasa de cierre y vencidas muestran el estado actual.</span>}
+      </div>
+
       {/* ── Indicadores ── */}
       <div className="bd-kpis">
         {kpis.map(x => (
@@ -344,7 +400,7 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
         </div>
         <div className="bd-funnel">
           {ETAPAS.map(et => {
-            const n = prospects.filter(p => p.etapa === et.key).length
+            const n = enPeriodo.filter(p => p.etapa === et.key).length
             const col = ETAPA_COLOR[et.key]
             const on = filtro === et.key
             return (
@@ -401,7 +457,7 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
               </tr></thead>
               <tbody>
                 {lista.length === 0 && (
-                  <tr><td colSpan={7} style={{ padding: '22px 18px', color: C.muted }}>No hay prospectos en esta etapa.</td></tr>
+                  <tr><td colSpan={7} style={{ padding: '22px 18px', color: C.muted }}>{rango ? 'No hay prospectos con actividad en este periodo.' : 'No hay prospectos en esta etapa.'}</td></tr>
                 )}
                 {lista.map(p => {
                   const q = p.quotes[0]
@@ -472,7 +528,7 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
 
           <section style={card} aria-label="Actividad reciente">
             <div style={{ ...cinzel(C.terra, 10), marginBottom: '12px' }}>Actividad reciente</div>
-            {actividad.length === 0 && <div style={{ fontSize: '13px', color: C.muted }}>Sin comunicaciones registradas.</div>}
+            {actividad.length === 0 && <div style={{ fontSize: '13px', color: C.muted }}>{rango ? 'Sin comunicaciones en el periodo.' : 'Sin comunicaciones registradas.'}</div>}
             <div style={{ display: 'grid', gap: '12px' }}>
               {actividad.map(({ c, p }) => (
                 <div key={c.id} style={{ borderLeft: `2px solid ${c.sentido === 'interno' ? C.amatistaLight : C.terra}`, paddingLeft: '10px' }}>
