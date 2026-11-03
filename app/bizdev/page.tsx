@@ -15,11 +15,12 @@ import {
 } from '@/lib/bizdev/feeModel'
 import { buildLetter, buildProposalDocx, letterAmounts } from '@/lib/bizdev/proposal'
 import { CARTERA } from '@/lib/bizdev/cartera'
+import { buildBrief } from '@/lib/bizdev/brief'
 
 // ─── Tipos de datos (filas de unrlvl-db) ─────────────────────────
 interface Quote {
-  id: string; prospect_id: string; params_version: string; margen: number; unidades: number; m2: number
-  es_casas: boolean; personal_incluido: number; personal_extra: PersonalExtra[]; costo_base: number
+  id: string; prospect_id: string; params_version: string | null; margen: number | null; origen?: string | null; unidades: number; m2: number
+  es_casas: boolean; personal_incluido: number | null; personal_extra: PersonalExtra[]; costo_base: number | null
   honorario: number; honorario_itbms: number; estado: string; enviada_el: string | null
   doc_ref: string | null; created_at: string
 }
@@ -56,7 +57,9 @@ const C = {
   carbon: '#1C2233', carbonDark: '#0E1018', parch: '#F0EDE8', cream: '#FAFAF7',
   // Contraste subido el 2026-11-03 (Sam: «más legible»): textos secundarios a ≥ 0.68 sobre carbón.
   muted: 'rgba(240,237,232,0.68)', faint: 'rgba(240,237,232,0.48)', line: 'rgba(92,52,114,0.4)',
-  label: 'rgba(225,218,210,0.82)', danger: '#E07A5F', success: '#7FB685', gold: '#E8B86B',
+  label: 'rgba(225,218,210,0.82)', danger: '#E07A5F', success: '#4FD8B8', gold: '#E8B86B',
+  // Mint de acento (Sam, 2026-11-03: «utiliza un poco más el accent mint»): lo positivo, lo que entra del prospecto y el tier del PH.
+  mint: '#4FD8B8', mintSoft: 'rgba(79,216,184,0.12)',
 }
 const MONO = "'Space Mono', ui-monospace, monospace"
 const cinzel = (color: string = C.terra, size = 9): React.CSSProperties => ({
@@ -85,6 +88,10 @@ const hoyISO = () => new Date().toISOString().slice(0, 10)
 const fmtFecha = (s: string | null) => s
   ? new Date(s.length === 10 ? `${s}T12:00:00` : s).toLocaleDateString('es-PA', { day: '2-digit', month: 'short', year: 'numeric' })
   : '—'
+/** «30 %» para el modelo; «manual» para las cartas previas al modelo (07_bizdev_cotizaciones_manuales.sql). */
+const margenDe = (q: Quote) => q.origen === 'manual' || q.margen == null ? 'manual' : `${Math.round(Number(q.margen) * 100)} %`
+/** Última cotización que salió al prospecto (no cuenta borradores). */
+const ultimaEnviada = (p: Prospect) => p.quotes.find(q => q.estado !== 'borrador')
 const tierFromSize = (p: FeeParams, u: number, m2: number, casas: boolean): Tier =>
   calcular(p, { u, m2, casas }).tierPH
 
@@ -296,8 +303,8 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
     : prospects
   const activos = prospects.filter(p => !INACTIVAS.has(p.etapa))
   // Cartera: última cotización de cada activo; con periodo, solo si esa cotización es del rango.
-  const cotizados = activos.filter(p => p.quotes[0] && enRango(p.quotes[0].created_at, rango))
-  const cartera = cotizados.reduce((s, p) => s + Number(p.quotes[0].honorario), 0)
+  const cotizados = activos.filter(p => { const q = ultimaEnviada(p); return !!q && enRango(q.enviada_el ?? q.created_at, rango) })
+  const cartera = cotizados.reduce((s, p) => s + Number(ultimaEnviada(p)!.honorario), 0)
   const enviadas30 = prospects.flatMap(p => p.quotes)
     .filter(q => q.estado === 'enviada' && q.enviada_el && (rango ? enRango(q.enviada_el, rango) : q.enviada_el >= hace30)).length
   const ganados = prospects.filter(p => p.etapa === 'ganado').length
@@ -305,6 +312,12 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
   const vencidas = activos.filter(p => p.proxima_fecha && p.proxima_fecha < hoy).length
 
   const [filtro, setFiltro] = useState<string | null>(null)
+  const [copiado, setCopiado] = useState(false)
+  const copiarBriefs = async () => {
+    const txt = activos.map(p => buildBrief(p, hoy).texto).join('\n\n' + '─'.repeat(40) + '\n\n')
+    try { await navigator.clipboard.writeText(txt || 'No hay prospectos activos.'); setCopiado(true); setTimeout(() => setCopiado(false), 2500) }
+    catch { onError('No se pudo copiar al portapapeles.') }
+  }
   const [nuevo, setNuevo] = useState(false)
   const [form, setForm] = useState({ short_name: '', full_name: '', unidades: '', m2_privados: '', es_casas: false })
   const [saving, setSaving] = useState(false)
@@ -329,7 +342,7 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
     { k: 'Cartera cotizada / mes', v: cotizados.length ? `$${usd(cartera)}` : '—', hero: true, color: C.terra,
       sub: cotizados.length ? `${cotizados.length} prospecto(s) con cotización · sin ITBMS` : rango ? 'Sin cotizaciones en el periodo' : 'Sin cotizaciones guardadas todavía' },
     { k: 'Prospectos activos', v: String(activos.length), color: C.amatistaLight, sub: `${prospects.length} en total` },
-    { k: 'Propuestas enviadas', v: String(enviadas30), color: C.parch, sub: rango ? 'en el periodo' : 'últimos 30 días' },
+    { k: 'Propuestas enviadas', v: String(enviadas30), color: C.mint, sub: rango ? 'en el periodo' : 'últimos 30 días' },
     { k: 'Tasa de cierre', v: ganados + perdidos ? `${Math.round((ganados / (ganados + perdidos)) * 100)} %` : '—', color: C.success,
       sub: `${ganados} ganado(s) · ${perdidos} perdido(s)` },
     { k: 'Acciones vencidas', v: String(vencidas), color: vencidas > 0 ? C.danger : C.muted,
@@ -448,6 +461,10 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
             <span style={{ fontSize: '12px', color: C.muted }}>
               {filtro ? `${lista.length} en ${ETAPAS.find(e => e.key === filtro)?.label}` : `${lista.length} en total`} · clic para abrir la ficha
             </span>
+            <button onClick={copiarBriefs} style={{ ...btn(false), marginLeft: 'auto', padding: '6px 12px', borderColor: 'rgba(79,216,184,0.5)', color: C.mint }}
+              title="Copia el brief de cada prospecto activo (entradas, respuestas y puntos clave)">
+              {copiado ? 'Briefs copiados ✓' : 'Copiar briefs en curso'}
+            </button>
           </div>
           <div style={{ overflowX: 'auto' }}>
             <table className="bd-ptable">
@@ -480,7 +497,7 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
                       <td className="r">
                         {q ? (<>
                           <div style={{ fontFamily: MONO, fontSize: '15px', fontWeight: 700, color: C.terra }}>${usd(Number(q.honorario))}</div>
-                          <div style={{ fontSize: '11px', color: C.muted }}>{Math.round(Number(q.margen) * 100)} % · {q.estado}</div>
+                          <div style={{ fontSize: '11px', color: q.estado === 'borrador' ? C.gold : C.muted }}>{margenDe(q)} · {q.estado}</div>
                         </>) : <span style={{ fontSize: '12px', color: C.muted }}>Sin cotización</span>}
                       </td>
                       <td>
@@ -531,7 +548,7 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
             {actividad.length === 0 && <div style={{ fontSize: '13px', color: C.muted }}>{rango ? 'Sin comunicaciones en el periodo.' : 'Sin comunicaciones registradas.'}</div>}
             <div style={{ display: 'grid', gap: '12px' }}>
               {actividad.map(({ c, p }) => (
-                <div key={c.id} style={{ borderLeft: `2px solid ${c.sentido === 'interno' ? C.amatistaLight : C.terra}`, paddingLeft: '10px' }}>
+                <div key={c.id} style={{ borderLeft: `2px solid ${c.sentido === 'interno' ? C.amatistaLight : c.sentido === 'recibido' ? C.mint : C.terra}`, paddingLeft: '10px' }}>
                   <div style={{ fontSize: '11px', color: C.muted }}>
                     <span style={{ color: C.parch, fontWeight: 600 }}>{p.short_name}</span> · <span style={{ fontFamily: MONO }}>{fmtFecha(c.fecha)}</span> · {CANAL_LABEL[c.canal] ?? c.canal}
                   </div>
@@ -579,6 +596,13 @@ function Ficha({ p, params, onClose, onNuevaCotizacion, onReload, onError }: {
     setComm({ fecha: hoyISO(), canal: 'whatsapp', sentido: 'enviado', resumen: '', doc_ref: '' }); setShowComm(false)
   })
 
+  const marcarEnviada = (id: string) => run(() => api('/api/bizdev/quotes', { method: 'PATCH', body: JSON.stringify({ id, estado: 'enviada' }) }))
+  const brief = buildBrief(p, hoyISO())
+  const [briefCopiado, setBriefCopiado] = useState(false)
+  const copiarBrief = async () => {
+    try { await navigator.clipboard.writeText(brief.texto); setBriefCopiado(true); setTimeout(() => setBriefCopiado(false), 2500) }
+    catch { onError('No se pudo copiar al portapapeles.') }
+  }
   const timeline = [
     ...p.comms.map(c => ({ t: c.fecha, kind: 'comm' as const, c })),
     ...p.quotes.map(q => ({ t: q.created_at, kind: 'quote' as const, q })),
@@ -608,6 +632,29 @@ function Ficha({ p, params, onClose, onNuevaCotizacion, onReload, onError }: {
             {p.contacto_nombre && <><dt style={{ color: C.muted }}>Contacto</dt><dd style={{ margin: 0 }}>{p.contacto_nombre}{p.contacto_rol ? ` · ${p.contacto_rol}` : ''}</dd></>}
           </dl>
         </div>
+
+        <section style={{ ...card, display: 'grid', gap: '12px', borderTop: `3px solid ${C.mint}` }} aria-label="Brief del prospecto">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ ...cinzel(C.mint, 9) }}>Brief del prospecto</div>
+            <button onClick={copiarBrief} style={{ ...btn(false), marginLeft: 'auto', padding: '4px 10px', fontSize: '8px', borderColor: 'rgba(79,216,184,0.5)', color: C.mint }}>
+              {briefCopiado ? 'Copiado ✓' : 'Copiar brief'}
+            </button>
+          </div>
+          <ul style={{ margin: 0, paddingLeft: '18px', display: 'grid', gap: '4px', fontSize: '13px', color: C.parch }}>
+            {brief.claves.map(k => <li key={k} style={{ color: /VENCIDA/.test(k) ? C.danger : /^Última cotización/.test(k) ? C.terraLight : C.parch }}>{k}</li>)}
+          </ul>
+          {([['Entradas del prospecto', brief.entradas, C.mint], ['Respuestas enviadas', brief.respuestas, C.terra]] as const).map(([t, xs, col]) => (
+            <div key={t} style={{ display: 'grid', gap: '6px' }}>
+              <div style={{ fontSize: '11px', fontWeight: 600, color: col }}>{t} · {xs.length}</div>
+              {xs.length === 0 && <div style={{ fontSize: '12px', color: C.muted }}>{t.startsWith('Entradas') ? 'Ninguna registrada. Regístralas con «Registrar comunicación» y sentido «recibido».' : 'Ninguna registrada.'}</div>}
+              {xs.slice(0, 4).map((c, i) => (
+                <div key={i} style={{ borderLeft: `2px solid ${col}`, paddingLeft: '10px', fontSize: '12px' }}>
+                  <span style={{ fontFamily: MONO, color: C.muted }}>{fmtFecha(c.fecha)}</span> · {CANAL_LABEL[c.canal] ?? c.canal}<br />{c.resumen}
+                </div>
+              ))}
+            </div>
+          ))}
+        </section>
 
         <div style={{ ...card, display: 'grid', gap: '10px' }}>
           <div style={{ ...cinzel(C.amatistaLight, 8) }}>Seguimiento</div>
@@ -655,7 +702,7 @@ function Ficha({ p, params, onClose, onNuevaCotizacion, onReload, onError }: {
           <div style={{ ...cinzel(C.terra, 9) }}>Línea de tiempo</div>
           {timeline.length === 0 && <div style={{ color: C.faint, fontSize: '13px' }}>Sin registros.</div>}
           {timeline.map(it => it.kind === 'comm' ? (
-            <div key={`c-${it.c.id}`} style={{ borderLeft: `2px solid ${it.c.sentido === 'interno' ? C.amatista : C.terra}`, paddingLeft: '12px', display: 'grid', gap: '2px' }}>
+            <div key={`c-${it.c.id}`} style={{ borderLeft: `2px solid ${it.c.sentido === 'interno' ? C.amatista : it.c.sentido === 'recibido' ? C.mint : C.terra}`, paddingLeft: '12px', display: 'grid', gap: '2px' }}>
               <div style={{ fontSize: '11px', color: C.muted }}>
                 <span style={{ fontFamily: MONO }}>{fmtFecha(it.c.fecha)}</span> · {CANAL_LABEL[it.c.canal] ?? it.c.canal} · {it.c.sentido}
                 {it.c.origen !== 'manual' && ` · ${it.c.origen === 'document_factory' ? 'Document Factory' : it.c.origen}`}
@@ -670,9 +717,15 @@ function Ficha({ p, params, onClose, onNuevaCotizacion, onReload, onError }: {
             <div key={`q-${it.q.id}`} style={{ borderLeft: `2px solid ${C.amatistaLight}`, paddingLeft: '12px', display: 'grid', gap: '2px' }}>
               <div style={{ fontSize: '11px', color: C.muted }}><span style={{ fontFamily: MONO }}>{fmtFecha(it.q.created_at)}</span> · Cotización · {it.q.estado}</div>
               <div style={{ fontSize: '13px', fontFamily: MONO }}>
-                ${usd(Number(it.q.honorario))} · {Math.round(Number(it.q.margen) * 100)} % · {it.q.params_version}
+                ${usd(Number(it.q.honorario))} · {margenDe(it.q)} · {it.q.origen === 'manual' ? 'carta previa al modelo' : it.q.params_version}
                 {Array.isArray(it.q.personal_extra) && it.q.personal_extra.length > 0 && ' · con personal adicional'}
               </div>
+              {it.q.estado === 'borrador' && (
+                <button disabled={busy} onClick={() => marcarEnviada(it.q.id)}
+                  style={{ ...btn(false), justifySelf: 'start', padding: '4px 10px', fontSize: '8px', borderColor: 'rgba(79,216,184,0.5)', color: C.mint }}>
+                  Marcar como enviada
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -721,6 +774,8 @@ function Calculadora(props: {
     <>
       <div className="bd-calc">
         <div style={{ display: 'grid', gap: '16px', minWidth: 0 }}>
+          <TiersCard P={P} u={props.u} m2={props.m2} casas={props.casas} tierPH={r.tierPH} />
+
           <section style={{ ...card, display: 'grid', gap: '12px' }} aria-label="El PH">
             <div style={{ ...cinzel(C.amatistaLight, 9) }}>El PH</div>
             <div><label style={label} htmlFor="k-prospect">Prospecto</label>
@@ -748,9 +803,12 @@ function Calculadora(props: {
             <div style={{ border: `1px solid ${C.terra}`, background: 'rgba(196,98,45,0.06)', borderRadius: '8px', padding: '12px', display: 'grid', gap: '4px' }}>
               <span style={{ ...cinzel(C.muted, 8) }}>Personal incluido en el precio base</span>
               <span style={{ fontFamily: MONO, fontSize: '22px' }}>{usd(r.incluidas, 1)} {r.incluidas === 1 ? 'persona' : 'personas'}</span>
+              <span style={{ fontSize: '12px', color: C.parch }}>
+                {usd(r.incluidas, 1)} × salario de tiempo completo ${usd(P.salario_std, 0)} = <b style={{ color: C.mint }}>${usd(r.incluidas * P.salario_std)}</b> de salario
+                · con {usd(P.carga_planilla * 100, 1)} % de carga: <b>${usd(r.costoIncluidas)}</b> al mes.
+              </span>
               <span style={{ fontSize: '11px', color: C.muted }}>
-                Salario ${usd(P.salario_std, 0)} + {usd(P.carga_planilla * 100, 1)} % de carga patronal = ${usd(r.costoPersona)} por persona al mes.
-                Cálculo exacto: {usd(r.personasCalc)} (redondeado a 0.5, mínimo {P.piso_personas}). No aparece en la carta.
+                0.5 = medio tiempo y medio salario; 1.0 = tiempo completo. Cálculo exacto: {usd(r.personasCalc)} (redondeado a 0.5, mínimo {P.piso_personas}). No aparece en la carta.
               </span>
               {r.extraPersonas > 0 && <span style={{ fontSize: '12px' }}><b>Total con lo agregado: {usd(r.incluidas + r.extraPersonas, 1)} personas.</b></span>}
             </div>
@@ -759,7 +817,7 @@ function Calculadora(props: {
               <div key={i} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,.8fr) minmax(0,1fr) minmax(0,1.4fr) auto', gap: '8px', alignItems: 'end' }}>
                 <div><label style={label} htmlFor={`x-q${i}`}>Personas</label>
                   <input id={`x-q${i}`} type="number" min={0} step={0.5} style={numInput} value={row.personas} onChange={e => updRow(i, 'personas', e.target.value)} /></div>
-                <div><label style={label} htmlFor={`x-s${i}`}>Salario US$</label>
+                <div><label style={label} htmlFor={`x-s${i}`}>Salario 1.0 US$</label>
                   <input id={`x-s${i}`} type="number" min={0} step={25} style={numInput} value={row.salario} onChange={e => updRow(i, 'salario', e.target.value)} /></div>
                 <div><label style={label} htmlFor={`x-t${i}`}>Contratación</label>
                   <select id={`x-t${i}`} style={inputStyle} value={row.tipo} onChange={e => updRow(i, 'tipo', e.target.value)}>
@@ -767,8 +825,15 @@ function Calculadora(props: {
                     <option value="servicios">Servicios profesionales</option>
                   </select></div>
                 <button aria-label="Quitar esta fila" onClick={() => setExtra(extra.filter((_, j) => j !== i))} style={{ ...btn(false), padding: '8px 12px' }}>×</button>
+                <div style={{ gridColumn: '1 / -1', fontSize: '12px', color: C.parch, marginTop: '-2px' }}>
+                  {usd(row.personas, 1)} × ${usd(row.salario, 0)} = <b style={{ color: C.mint }}>${usd(row.personas * row.salario)}</b> de salario
+                  {row.tipo === 'planilla'
+                    ? <> · con {usd(P.carga_planilla * 100, 1)} % de carga: <b>${usd(row.personas * row.salario * (1 + P.carga_planilla))}</b> al mes</>
+                    : <> · servicios profesionales, sin carga</>}
+                </div>
               </div>
             ))}
+            <div style={{ fontSize: '11px', color: C.muted }}>El salario es el de tiempo completo (1.0). Con 0.5 personas se cuenta la mitad: medio tiempo, medio salario.</div>
             <button style={{ ...btn(true), justifySelf: 'start' }} onClick={() => setExtra([...extra, { personas: 0.5, salario: P.salario_std, tipo: 'planilla' }])}>+ Agregar personal</button>
           </section>
         </div>
@@ -823,6 +888,50 @@ function Calculadora(props: {
   )
 }
 
+/** Tarjeta fija con los rangos de cada tier, leídos de fphs_fee_params.tiers (dato, no código). */
+function TiersCard({ P, u, m2, casas, tierPH }: { P: FeeParams; u: number; m2: number; casas: boolean; tierPH: Tier }) {
+  const [ua, ub] = P.tiers.unidades
+  const [ma, mb] = P.tiers.m2
+  const [, pa, pb] = P.tiers.precio
+  const n0 = (n: number) => usd(n, 0)
+  const filas: { t: Tier; nombre: string; uds: string; m2: string; precio: string }[] = [
+    { t: 1, nombre: 'Esencial', uds: `< ${n0(ua)}`, m2: `< ${n0(ma)}`, precio: `$${n0(P.tiers.precio[0])} – $${n0(pa)}` },
+    { t: 2, nombre: 'Profesional', uds: `${n0(ua)} – ${n0(ub - 1)}`, m2: `${n0(ma)} – ${n0(mb)}`, precio: `$${n0(pa)} – $${n0(pb)}` },
+    { t: 3, nombre: 'Élite', uds: `≥ ${n0(ub)}`, m2: `> ${n0(mb)}`, precio: `≥ $${n0(pb)}` },
+  ]
+  return (
+    <section style={{ ...card, padding: '16px', borderTop: `3px solid ${C.mint}` }} aria-label="Tiers">
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '10px' }}>
+        <div style={{ ...cinzel(C.mint, 9) }}>Tiers</div>
+        <span style={{ fontSize: '11px', color: C.muted }}>parámetros {P.version} · el mayor entre unidades y m²</span>
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+        <thead><tr>
+          {['Tier', 'Unidades', 'm²', 'Honorario'].map(h => (
+            <th key={h} style={{ textAlign: h === 'Tier' ? 'left' : 'right', ...cinzel(C.label, 7), padding: '4px 4px 6px', borderBottom: `1px solid ${C.line}` }}>{h}</th>
+          ))}
+        </tr></thead>
+        <tbody>
+          {filas.map(f => {
+            const on = f.t === tierPH
+            return (
+              <tr key={f.t} style={{ background: on ? C.mintSoft : 'transparent' }}>
+                <td style={{ padding: '7px 4px', fontWeight: 600, color: on ? C.mint : C.parch, whiteSpace: 'nowrap' }}>{on ? '● ' : ''}{f.nombre}</td>
+                <td style={{ padding: '7px 4px', textAlign: 'right', fontFamily: MONO, color: on ? C.parch : C.muted, whiteSpace: 'nowrap' }}>{f.uds}</td>
+                <td style={{ padding: '7px 4px', textAlign: 'right', fontFamily: MONO, color: on ? C.parch : C.muted, whiteSpace: 'nowrap' }}>{f.m2}</td>
+                <td style={{ padding: '7px 4px', textAlign: 'right', fontFamily: MONO, color: on ? C.parch : C.muted, whiteSpace: 'nowrap' }}>{f.precio}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      <div style={{ fontSize: '11px', color: C.muted, marginTop: '8px' }}>
+        Este PH: <b style={{ color: C.mint }}>{TIER_NOMBRES[tierPH]}</b> · {u} unidades{casas ? ' · PH de casas' : ` · ${usd(m2, 0)} m²`}. Honorario al mes, sin ITBMS.
+      </div>
+    </section>
+  )
+}
+
 function CarteraTable({ P, refIdx }: { P: FeeParams; refIdx: number }) {
   let tot = 0, act = 0
   const rows = CARTERA.map(ph => {
@@ -869,6 +978,9 @@ function Propuesta({ params, result, sel, setSel, ph, u, m2, casas, extra, prosp
   const saveKey = JSON.stringify([prospect?.id ?? '', sel, u, m2, casas, extra, params.version])
   const [savedKey, setSavedKey] = useState<string | null>(null)
   const yaGuardada = savedKey === saveKey
+  // Borrador guardado para esta misma propuesta: «Guardar como enviada» lo marca en vez de crear otra cotización.
+  const [borrador, setBorrador] = useState<{ key: string; id: string } | null>(null)
+  const borradorActual = borrador?.key === saveKey ? borrador.id : null
 
   const copiar = async () => {
     try { await navigator.clipboard.writeText(text); setStatus('Texto copiado.') }
@@ -883,16 +995,28 @@ function Propuesta({ params, result, sel, setSel, ph, u, m2, casas, extra, prosp
       el.click(); URL.revokeObjectURL(url); setStatus('.docx descargado.')
     } catch (e) { onError(e instanceof Error ? e.message : 'Error generando .docx') }
   }
+  const crearCotizacion = () => api<{ quote: Quote }>('/api/bizdev/quotes', {
+    method: 'POST', body: JSON.stringify({
+      prospect_id: prospect!.id, margen: params.margenes[sel], unidades: u, m2, es_casas: casas, personal_extra: extra,
+    }),
+  })
+  const guardarBorrador = async () => {
+    if (!prospect || lock.current || yaGuardada || borradorActual) return
+    lock.current = true
+    setBusy(true); onError(null)
+    try {
+      const { quote } = await crearCotizacion()
+      setBorrador({ key: saveKey, id: quote.id })
+      setStatus(`Borrador guardado: $${usd(Number(quote.honorario))} en la ficha de ${prospect.short_name}. Aún no cuenta como enviada.`)
+      await onSaved()
+    } catch (e) { onError(e instanceof Error ? e.message : 'Error guardando') } finally { setBusy(false); lock.current = false }
+  }
   const guardarEnviada = async () => {
     if (!prospect || lock.current || yaGuardada) return
     lock.current = true
     setBusy(true); onError(null)
     try {
-      const { quote } = await api<{ quote: Quote }>('/api/bizdev/quotes', {
-        method: 'POST', body: JSON.stringify({
-          prospect_id: prospect.id, margen: params.margenes[sel], unidades: u, m2, es_casas: casas, personal_extra: extra,
-        }),
-      })
+      const quote = borradorActual ? { id: borradorActual, honorario: a.honorario } : (await crearCotizacion()).quote
       await api('/api/bizdev/quotes', { method: 'PATCH', body: JSON.stringify({ id: quote.id, estado: 'enviada' }) })
       setSavedKey(saveKey)
       setStatus(`Guardada como enviada: $${usd(Number(quote.honorario))} en la línea de tiempo de ${prospect.short_name}.`)
@@ -920,11 +1044,16 @@ function Propuesta({ params, result, sel, setSel, ph, u, m2, casas, extra, prosp
       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
         <button style={btn(true)} onClick={copiar}>Copiar texto</button>
         <button style={btn(false)} onClick={descargar}>Descargar .docx</button>
+        <button style={{ ...btn(false, !!prospect && !busy && !yaGuardada && !borradorActual), borderColor: 'rgba(79,216,184,0.5)', color: C.mint }}
+          disabled={!prospect || busy || yaGuardada || !!borradorActual} onClick={guardarBorrador}
+          title={prospect ? 'Guarda la cotización sin marcarla como enviada' : 'Elige un prospecto en la Calculadora'}>
+          {borradorActual ? 'Borrador guardado ✓' : 'Guardar borrador'}
+        </button>
         <button style={btn(true, !!prospect && !busy && !yaGuardada)} disabled={!prospect || busy || yaGuardada} onClick={guardarEnviada}
           title={prospect ? '' : 'Elige un prospecto en la Calculadora para registrar el envío'}>
           {busy ? 'Guardando…' : yaGuardada ? 'Guardada ✓' : 'Guardar como enviada'}
         </button>
-        <span role="status" style={{ fontSize: '12px', color: C.muted }}>
+        <span role="status" style={{ fontSize: '12px', color: yaGuardada || borradorActual ? C.mint : C.muted }}>
           {status || (!prospect && 'Para guardar, elige un prospecto en la Calculadora.')}
         </span>
       </div>
