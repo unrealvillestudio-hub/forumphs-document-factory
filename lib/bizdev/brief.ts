@@ -7,7 +7,13 @@
  * Fuente: solo fphs_prospects, fphs_quotes y fphs_prospect_comms. Las entradas son las
  * comunicaciones con sentido 'recibido' que alguien registró en la ficha: ningún buzón se lee
  * (MAIL_PRIVACY_RULE.md). Si no se registran, el brief lo dice en vez de inventarlas.
+ *
+ * Desde la migración 08 suma la lectura de correos y las acciones propuestas que escribe
+ * unrlvl-communications-services (fphs_prospect_insights y fphs_prospect_actions). Son opcionales:
+ * un prospecto sin ellas da el mismo brief que antes.
  */
+
+import { pendientes, ultimaLectura, TEMPERATURA_LABEL, type Accion, type Insight } from './insights'
 
 export interface BriefQuote {
   honorario: number; margen: number | null; estado: string; origen?: string | null
@@ -19,6 +25,7 @@ export interface BriefProspect {
   unidades: number | null; m2_privados: number | null; es_casas: boolean
   proxima_accion: string | null; proxima_fecha: string | null; notas: string | null
   quotes: BriefQuote[]; comms: BriefComm[]
+  insights?: Insight[]; actions?: Accion[]
 }
 
 export interface Brief {
@@ -27,6 +34,7 @@ export interface Brief {
   entradas: BriefComm[]
   respuestas: BriefComm[]
   internas: BriefComm[]
+  porDecidir: Accion[]
   texto: string
 }
 
@@ -82,6 +90,14 @@ export function buildBrief(p: BriefProspect, hoy: string): Brief {
   } else {
     claves.push('Sin próxima acción definida.')
   }
+  const lectura = ultimaLectura(p.insights ?? [])
+  if (lectura) {
+    const temp = lectura.temperatura ? `, ${TEMPERATURA_LABEL[lectura.temperatura].toLowerCase()}` : ''
+    claves.push(`Lectura más reciente (${dia(lectura.created_at)}${temp}): ${lectura.interpretacion}`)
+    if (lectura.objeciones.length) claves.push(`Objeciones: ${lectura.objeciones.join('; ')}.`)
+  }
+  const porDecidir = pendientes(p.actions ?? [])
+  if (porDecidir.length) claves.push(`Acciones propuestas por decidir: ${porDecidir.length} (la más urgente: ${porDecidir[0].accion}).`)
   if (p.notas) claves.push(`Notas: ${p.notas}`)
 
   const linea = (c: BriefComm) => `- ${dia(c.fecha)} · ${CANAL[c.canal] ?? c.canal}: ${c.resumen}`
@@ -98,6 +114,8 @@ export function buildBrief(p: BriefProspect, hoy: string): Brief {
     bloque('RESPUESTAS (lo que le hemos enviado)', respuestas, 'Ninguna registrada.'),
     '',
     bloque('NOTAS INTERNAS', internas, 'Ninguna.'),
+    ...(porDecidir.length ? ['', 'ACCIONES PROPUESTAS POR DECIDIR',
+      ...porDecidir.map(a => `- [${a.prioridad}] ${a.accion}${a.fecha_sugerida ? ` (sugerida para ${a.fecha_sugerida})` : ''}`)] : []),
   ].join('\n')
-  return { titulo, claves, entradas, respuestas, internas, texto }
+  return { titulo, claves, entradas, respuestas, internas, porDecidir, texto }
 }
