@@ -68,7 +68,18 @@ export async function PATCH(req: Request) {
     if (!q) return Response.json({ error: 'cotización no encontrada' }, { status: 404 })
 
     let comm: unknown = null
-    if (estado === 'enviada') {
+    if (estado === 'enviada' && q.origen === 'manual') {
+      // Cotización manual (carta previa al modelo, 07_bizdev_cotizaciones_manuales.sql): sin recálculo.
+      const [c] = await sb<unknown[]>('fphs_prospect_comms', {
+        method: 'POST', prefer: 'return=representation',
+        body: JSON.stringify({
+          prospect_id: q.prospect_id, canal: 'documento', sentido: 'enviado', origen: 'document_factory',
+          resumen: `Propuesta de administración enviada: $${usd(Number(q.honorario))} mensuales más ITBMS`,
+          doc_ref: q.doc_ref ?? null, quote_id: q.id,
+        }),
+      })
+      comm = c
+    } else if (estado === 'enviada') {
       const params = normalizeParams(await currentParamsRow())
       const extra = parseExtra(q.personal_extra)
       const r = calcular(params, {
