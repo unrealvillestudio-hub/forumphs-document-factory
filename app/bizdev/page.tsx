@@ -54,8 +54,9 @@ const SENTIDOS = ['enviado', 'recibido', 'interno']
 const C = {
   amatista: '#5C3472', amatistaLight: '#EAD9F5', terra: '#C4622D', terraLight: '#F5E0D4',
   carbon: '#1C2233', carbonDark: '#0E1018', parch: '#F0EDE8', cream: '#FAFAF7',
-  muted: 'rgba(240,237,232,0.45)', faint: 'rgba(240,237,232,0.25)', line: 'rgba(92,52,114,0.3)',
-  danger: '#E07A5F',
+  // Contraste subido el 2026-11-03 (Sam: «más legible»): textos secundarios a ≥ 0.68 sobre carbón.
+  muted: 'rgba(240,237,232,0.68)', faint: 'rgba(240,237,232,0.48)', line: 'rgba(92,52,114,0.4)',
+  label: 'rgba(225,218,210,0.82)', danger: '#E07A5F', success: '#7FB685', gold: '#E8B86B',
 }
 const MONO = "'Space Mono', ui-monospace, monospace"
 const cinzel = (color: string = C.terra, size = 9): React.CSSProperties => ({
@@ -71,7 +72,7 @@ const inputStyle: React.CSSProperties = {
   fontFamily: "'DM Sans', sans-serif",
 }
 const numInput: React.CSSProperties = { ...inputStyle, fontFamily: MONO, fontSize: '14px' }
-const label: React.CSSProperties = { ...cinzel('rgba(184,176,168,0.6)', 8), display: 'block', marginBottom: '5px' }
+const label: React.CSSProperties = { ...cinzel(C.label, 8), display: 'block', marginBottom: '5px' }
 const btn = (primary = true, enabled = true): React.CSSProperties => ({
   padding: '9px 16px', borderRadius: '6px', cursor: enabled ? 'pointer' : 'not-allowed',
   background: primary ? (enabled ? C.amatista : 'rgba(92,52,114,0.2)') : 'transparent',
@@ -141,10 +142,21 @@ export default function BizDevPage() {
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
         .bd-card-click:hover{border-color:rgba(196,98,45,0.45)!important}
         .bd-margin:hover{border-color:${C.terra}!important}
-        .bd-cols{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(220px,1fr);gap:12px;overflow-x:auto;padding-bottom:8px}
+        .bd-funnel{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:8px}
+        .bd-main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,320px);gap:16px;align-items:start}
+        .bd-ptable{border-collapse:collapse;width:100%;min-width:760px}
+        .bd-ptable th{font-family:'Cinzel',serif;font-size:8px;letter-spacing:.18em;text-transform:uppercase;color:rgba(225,218,210,0.82);font-weight:600;text-align:left;padding:10px 14px;background:rgba(14,16,24,0.55);border-bottom:1px solid rgba(92,52,114,0.4)}
+        .bd-ptable td{padding:12px 14px;border-bottom:1px solid rgba(92,52,114,0.2);vertical-align:middle}
+        .bd-ptable .r{text-align:right}
+        .bd-row{cursor:pointer;transition:background .15s}
+        .bd-row:hover,.bd-row:focus-visible{background:rgba(196,98,45,0.08);outline:none}
+        .bd-mini:hover{border-color:rgba(196,98,45,0.5)!important}
+        @media (max-width:1100px){.bd-main{grid-template-columns:minmax(0,1fr)}.bd-funnel{grid-template-columns:repeat(4,minmax(0,1fr))}}
+        @media (max-width:520px){.bd-funnel{grid-template-columns:repeat(2,minmax(0,1fr))}}
+        @media (max-width:860px){.bd-kpi-hero{grid-column:1 / -1}}
         .bd-calc{display:grid;grid-template-columns:minmax(0,360px) minmax(0,1fr);gap:16px;align-items:start}
         .bd-margins{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
-        .bd-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
+        .bd-kpis{display:grid;grid-template-columns:1.4fr repeat(4,minmax(0,1fr));gap:12px}
         @media (max-width:860px){.bd-calc{grid-template-columns:minmax(0,1fr)}.bd-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
         @media (max-width:560px){.bd-margins{grid-template-columns:repeat(2,minmax(0,1fr))}}
         .bd-table{border-collapse:collapse;width:100%;font-size:12px;min-width:680px}
@@ -157,12 +169,12 @@ export default function BizDevPage() {
       {/* HERO */}
       <div style={{ position: 'relative', overflow: 'hidden', padding: '48px 0 28px', borderBottom: '1px solid rgba(92,52,114,0.12)' }}>
         <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 80% 10%, rgba(92,52,114,0.18), transparent 60%)', pointerEvents: 'none' }} />
-        <div style={{ maxWidth: '1120px', margin: '0 auto', padding: '0 28px', position: 'relative' }}>
+        <div style={{ maxWidth: '1320px', margin: '0 auto', padding: '0 28px', position: 'relative' }}>
           <div style={{ ...cinzel(C.terra, 11), opacity: 0.85, marginBottom: '10px' }}>Business Development · uso interno</div>
           <h1 style={{ fontFamily: "'EB Garamond',serif", fontWeight: 400, fontSize: 'clamp(2rem,5vw,3.2rem)', lineHeight: 1.05, color: C.parch, margin: '0 0 10px' }}>
             BizDev
           </h1>
-          <p style={{ fontFamily: "'EB Garamond',serif", fontSize: '16px', fontStyle: 'italic', color: 'rgba(240,237,232,0.45)', margin: 0 }}>
+          <p style={{ fontFamily: "'EB Garamond',serif", fontSize: '16px', fontStyle: 'italic', color: 'rgba(240,237,232,0.66)', margin: 0 }}>
             Prospectos, honorario por modelo y propuesta para la Junta Directiva
             {params && <> · modelo <span style={{ fontFamily: MONO, fontStyle: 'normal', fontSize: '13px' }}>{params.version}</span></>}
           </p>
@@ -170,7 +182,7 @@ export default function BizDevPage() {
       </div>
 
       {/* Sub-navegación */}
-      <div style={{ maxWidth: '1120px', margin: '0 auto', padding: '16px 28px 0' }}>
+      <div style={{ maxWidth: '1320px', margin: '0 auto', padding: '16px 28px 0' }}>
         <div role="tablist" style={{ display: 'flex', gap: 0, borderBottom: '1px solid rgba(255,255,255,0.06)', overflowX: 'auto' }}>
           {([['dashboard', 'Dashboard'], ['calc', 'Calculadora'], ['prop', 'Propuesta']] as [View, string][]).map(([k, l]) => (
             <button key={k} role="tab" aria-selected={view === k} onClick={() => setView(k)}
@@ -181,7 +193,7 @@ export default function BizDevPage() {
         </div>
       </div>
 
-      <main style={{ maxWidth: '1120px', margin: '0 auto', padding: '24px 28px', display: 'grid', gap: '16px' }}>
+      <main style={{ maxWidth: '1320px', margin: '0 auto', padding: '24px 28px', display: 'grid', gap: '16px' }}>
         {error && (
           <div role="alert" style={{ background: 'rgba(196,98,45,0.07)', border: '1px solid rgba(196,98,45,0.25)', borderLeft: `3px solid ${C.terra}`, borderRadius: '8px', padding: '14px 18px', fontSize: '13px', color: C.terra }}>
             {error}
@@ -227,6 +239,27 @@ export default function BizDevPage() {
 
 // ════════════════════════════════════════════════════════════════
 // DASHBOARD
+// Colores por etapa: el embudo avanza de amatista (descubrimiento) a terra (oferta), y cierra en verde o rojo.
+const ETAPA_COLOR: Record<string, string> = {
+  contacto: '#B79CCB', levantamiento: '#A07FBF', confidencialidad: '#8E62AD', cotizado: C.terra,
+  negociacion: '#E3894F', ganado: C.success, perdido: C.danger, pausado: '#8C8A88',
+}
+const TIER_COLOR: Record<string, string> = { Esencial: '#B79CCB', Profesional: C.terra, 'Élite': C.gold, 'Bajo el piso': C.danger }
+
+function Badge({ text, color, solid = false }: { text: string; color: string; solid?: boolean }) {
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap',
+      padding: '3px 9px', borderRadius: '999px', fontFamily: "'DM Sans',sans-serif", fontSize: '11px', fontWeight: 600,
+      letterSpacing: '0.02em', color: solid ? C.carbonDark : color,
+      background: solid ? color : `${color}1F`, border: `1px solid ${color}66`,
+    }}>
+      {!solid && <span style={{ width: 6, height: 6, borderRadius: '50%', background: color }} />}
+      {text}
+    </span>
+  )
+}
+
 function Dashboard({ params, prospects, onOpen, onReload, onError }: {
   params: FeeParams; prospects: Prospect[]; onOpen: (id: string) => void
   onReload: () => Promise<void>; onError: (e: string | null) => void
@@ -234,12 +267,14 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
   const hoy = hoyISO()
   const hace30 = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10)
   const activos = prospects.filter(p => !INACTIVAS.has(p.etapa))
-  const cartera = activos.reduce((s, p) => s + (p.quotes[0] ? Number(p.quotes[0].honorario) : 0), 0)
+  const cotizados = activos.filter(p => p.quotes[0])
+  const cartera = cotizados.reduce((s, p) => s + Number(p.quotes[0].honorario), 0)
   const enviadas30 = prospects.flatMap(p => p.quotes).filter(q => q.estado === 'enviada' && q.enviada_el && q.enviada_el >= hace30).length
   const ganados = prospects.filter(p => p.etapa === 'ganado').length
   const perdidos = prospects.filter(p => p.etapa === 'perdido').length
   const vencidas = activos.filter(p => p.proxima_fecha && p.proxima_fecha < hoy).length
 
+  const [filtro, setFiltro] = useState<string | null>(null)
   const [nuevo, setNuevo] = useState(false)
   const [form, setForm] = useState({ short_name: '', full_name: '', unidades: '', m2_privados: '', es_casas: false })
   const [saving, setSaving] = useState(false)
@@ -259,34 +294,79 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
     } catch (e) { onError(e instanceof Error ? e.message : 'Error') } finally { setSaving(false) }
   }
 
-  const kpis: [string, string][] = [
-    ['Prospectos activos', String(activos.length)],
-    ['Cartera cotizada / mes', `$${usd(cartera)}`],
-    ['Propuestas enviadas · 30 días', String(enviadas30)],
-    ['Tasa de cierre', ganados + perdidos ? `${Math.round((ganados / (ganados + perdidos)) * 100)} %` : '—'],
-    ['Acciones vencidas', String(vencidas)],
+  type Kpi = { k: string; v: string; sub: string; color: string; hero?: boolean }
+  const kpis: Kpi[] = [
+    { k: 'Cartera cotizada / mes', v: cotizados.length ? `$${usd(cartera)}` : '—', hero: true, color: C.terra,
+      sub: cotizados.length ? `${cotizados.length} prospecto(s) con cotización · sin ITBMS` : 'Sin cotizaciones guardadas todavía' },
+    { k: 'Prospectos activos', v: String(activos.length), color: C.amatistaLight, sub: `${prospects.length} en total` },
+    { k: 'Propuestas enviadas', v: String(enviadas30), color: C.parch, sub: 'últimos 30 días' },
+    { k: 'Tasa de cierre', v: ganados + perdidos ? `${Math.round((ganados / (ganados + perdidos)) * 100)} %` : '—', color: C.success,
+      sub: `${ganados} ganado(s) · ${perdidos} perdido(s)` },
+    { k: 'Acciones vencidas', v: String(vencidas), color: vencidas > 0 ? C.danger : C.muted,
+      sub: vencidas > 0 ? 'requieren seguimiento' : 'todo al día' },
   ]
+
+  const lista = (filtro ? prospects.filter(p => p.etapa === filtro) : prospects)
+    .slice().sort((a, b) => ETAPAS.findIndex(e => e.key === b.etapa) - ETAPAS.findIndex(e => e.key === a.etapa))
+  const acciones = activos.filter(p => p.proxima_fecha || p.proxima_accion)
+    .slice().sort((a, b) => (a.proxima_fecha ?? '9999').localeCompare(b.proxima_fecha ?? '9999'))
+  const actividad = prospects.flatMap(p => p.comms.map(c => ({ c, p })))
+    .sort((a, b) => b.c.fecha.localeCompare(a.c.fecha)).slice(0, 6)
+  const maxEtapa = Math.max(1, ...ETAPAS.map(e => prospects.filter(p => p.etapa === e.key).length))
 
   return (
     <>
+      {/* ── Indicadores ── */}
       <div className="bd-kpis">
-        {kpis.map(([k, v], i) => (
-          <div key={k} style={{ ...card, padding: '16px' }}>
-            <div style={{ ...cinzel('rgba(184,176,168,0.6)', 8), marginBottom: '8px' }}>{k}</div>
-            <div style={{ fontFamily: MONO, fontSize: '20px', color: i === 4 && vencidas > 0 ? C.danger : C.parch }}>{v}</div>
+        {kpis.map(x => (
+          <div key={x.k} className={x.hero ? 'bd-kpi-hero' : undefined} style={{
+            ...card, padding: '18px 18px 16px', position: 'relative', overflow: 'hidden',
+            borderTop: `3px solid ${x.color}`,
+            background: x.hero ? `linear-gradient(160deg, rgba(196,98,45,0.18), ${C.carbon} 70%)` : C.carbon,
+          }}>
+            <div style={{ ...cinzel(C.label, 8), marginBottom: '10px' }}>{x.k}</div>
+            <div style={{ fontFamily: MONO, fontSize: x.hero ? '28px' : '26px', fontWeight: 700, color: x.color, lineHeight: 1.1, overflowWrap: 'anywhere' }}>{x.v}</div>
+            <div style={{ fontSize: '11px', color: C.muted, marginTop: '6px' }}>{x.sub}</div>
           </div>
         ))}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-        <div style={{ ...cinzel(C.terra, 10) }}>Prospectos por etapa</div>
-        <div style={{ marginLeft: 'auto' }}>
-          <button style={btn(!nuevo)} onClick={() => setNuevo(v => !v)}>{nuevo ? 'Cancelar' : '+ Nuevo prospecto'}</button>
+      {/* ── Embudo por etapa (filtra la tabla) ── */}
+      <section style={{ ...card, padding: '16px 18px' }} aria-label="Embudo por etapa">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', flexWrap: 'wrap' }}>
+          <div style={{ ...cinzel(C.terra, 10) }}>Embudo comercial</div>
+          {filtro && (
+            <button onClick={() => setFiltro(null)} style={{ ...btn(false), padding: '4px 10px', fontSize: '8px' }}>Quitar filtro ×</button>
+          )}
+          <div style={{ marginLeft: 'auto' }}>
+            <button style={btn(!nuevo)} onClick={() => setNuevo(v => !v)}>{nuevo ? 'Cancelar' : '+ Nuevo prospecto'}</button>
+          </div>
         </div>
-      </div>
+        <div className="bd-funnel">
+          {ETAPAS.map(et => {
+            const n = prospects.filter(p => p.etapa === et.key).length
+            const col = ETAPA_COLOR[et.key]
+            const on = filtro === et.key
+            return (
+              <button key={et.key} onClick={() => setFiltro(on ? null : et.key)} aria-pressed={on}
+                style={{
+                  textAlign: 'left', cursor: 'pointer', borderRadius: '8px', padding: '10px 10px 8px', minWidth: 0,
+                  background: on ? `${col}33` : 'rgba(14,16,24,0.55)', border: `1px solid ${on ? col : 'rgba(255,255,255,0.06)'}`,
+                  opacity: n === 0 && !on ? 0.55 : 1, color: C.parch,
+                }}>
+                <div style={{ fontSize: '11px', fontWeight: 600, color: col, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{et.label}</div>
+                <div style={{ fontFamily: MONO, fontSize: '20px', fontWeight: 700, margin: '2px 0 6px' }}>{n}</div>
+                <div style={{ height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.06)' }}>
+                  <div style={{ height: 4, borderRadius: 2, width: `${(n / maxEtapa) * 100}%`, background: col }} />
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      </section>
 
       {nuevo && (
-        <div style={{ ...card, display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: '12px', alignItems: 'end' }}>
+        <div style={{ ...card, display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: '12px', alignItems: 'end', borderTop: `3px solid ${C.amatista}` }}>
           <div><label style={label} htmlFor="np-short">Nombre corto</label>
             <input id="np-short" style={inputStyle} value={form.short_name} onChange={e => setForm({ ...form, short_name: e.target.value })} /></div>
           <div><label style={label} htmlFor="np-full">Nombre completo</label>
@@ -304,53 +384,109 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
         </div>
       )}
 
-      <div className="bd-cols">
-        {ETAPAS.map(et => {
-          const items = prospects.filter(p => p.etapa === et.key)
-          return (
-            <section key={et.key} aria-label={et.label} style={{ display: 'grid', gap: '10px', alignContent: 'start' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0 2px' }}>
-                <span style={{ ...cinzel(INACTIVAS.has(et.key) ? C.muted : C.amatistaLight, 8) }}>{et.label}</span>
-                <span style={{ fontFamily: MONO, fontSize: '11px', color: C.faint }}>{items.length}</span>
-              </div>
-              {items.length === 0 && <div style={{ border: '1px dashed rgba(92,52,114,0.2)', borderRadius: '8px', height: '48px' }} />}
-              {items.map(p => <ProspectCard key={p.id} p={p} params={params} onOpen={() => onOpen(p.id)} />)}
-            </section>
-          )
-        })}
+      {/* ── Tabla de prospectos + panel lateral ── */}
+      <div className="bd-main">
+        <section style={{ ...card, padding: 0, overflow: 'hidden' }} aria-label="Prospectos">
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', padding: '16px 18px 12px' }}>
+            <div style={{ ...cinzel(C.terra, 10) }}>Prospectos</div>
+            <span style={{ fontSize: '12px', color: C.muted }}>
+              {filtro ? `${lista.length} en ${ETAPAS.find(e => e.key === filtro)?.label}` : `${lista.length} en total`} · clic para abrir la ficha
+            </span>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="bd-ptable">
+              <thead><tr>
+                <th>Prospecto</th><th>Etapa</th><th>Tier</th><th className="r">Tamaño</th>
+                <th className="r">Última cotización</th><th>Próxima acción</th><th>Última comunicación</th>
+              </tr></thead>
+              <tbody>
+                {lista.length === 0 && (
+                  <tr><td colSpan={7} style={{ padding: '22px 18px', color: C.muted }}>No hay prospectos en esta etapa.</td></tr>
+                )}
+                {lista.map(p => {
+                  const q = p.quotes[0]
+                  const c = p.comms[0]
+                  const vencida = !!p.proxima_fecha && p.proxima_fecha < hoy && !INACTIVAS.has(p.etapa)
+                  const tier = p.unidades != null ? TIER_NOMBRES[tierFromSize(params, p.unidades, Number(p.m2_privados ?? 0), p.es_casas)] : null
+                  const et = ETAPAS.find(e => e.key === p.etapa)
+                  return (
+                    <tr key={p.id} className="bd-row" onClick={() => onOpen(p.id)} tabIndex={0}
+                      onKeyDown={e => { if (e.key === 'Enter') onOpen(p.id) }} style={{ boxShadow: `inset 3px 0 0 ${ETAPA_COLOR[p.etapa]}` }}>
+                      <td>
+                        <div style={{ fontFamily: "'EB Garamond',serif", fontSize: '19px', color: C.parch, lineHeight: 1.1, whiteSpace: 'nowrap' }}>{p.short_name}</div>
+                        <div style={{ fontFamily: MONO, fontSize: '10px', color: C.muted }}>{p.code}</div>
+                      </td>
+                      <td><Badge text={et?.label ?? p.etapa} color={ETAPA_COLOR[p.etapa]} /></td>
+                      <td>{tier ? <Badge text={tier} color={TIER_COLOR[tier]} /> : <span style={{ color: C.muted }}>—</span>}</td>
+                      <td className="r" style={{ fontFamily: MONO, fontSize: '12px', color: C.parch, whiteSpace: 'nowrap' }}>
+                        {p.unidades ?? '—'} uds.<br /><span style={{ color: C.muted }}>{p.es_casas ? 'casas' : p.m2_privados != null ? `${usd(Number(p.m2_privados), 0)} m²` : '—'}</span>
+                      </td>
+                      <td className="r">
+                        {q ? (<>
+                          <div style={{ fontFamily: MONO, fontSize: '15px', fontWeight: 700, color: C.terra }}>${usd(Number(q.honorario))}</div>
+                          <div style={{ fontSize: '11px', color: C.muted }}>{Math.round(Number(q.margen) * 100)} % · {q.estado}</div>
+                        </>) : <span style={{ fontSize: '12px', color: C.muted }}>Sin cotización</span>}
+                      </td>
+                      <td>
+                        {p.proxima_accion || p.proxima_fecha ? (
+                          <div style={{ color: vencida ? C.danger : C.parch, fontSize: '12px' }}>
+                            <div style={{ fontWeight: vencida ? 700 : 500 }}>{p.proxima_accion ?? 'Próxima acción'}</div>
+                            <div style={{ fontFamily: MONO, fontSize: '11px', color: vencida ? C.danger : C.muted, whiteSpace: 'nowrap' }}>{fmtFecha(p.proxima_fecha)}{vencida && ' · vencida'}</div>
+                          </div>
+                        ) : <span style={{ fontSize: '12px', color: C.gold }}>Definir próxima acción</span>}
+                      </td>
+                      <td style={{ fontSize: '12px' }}>
+                        {c ? (<>
+                          <div style={{ color: C.parch }}>{CANAL_LABEL[c.canal] ?? c.canal} · {c.sentido}</div>
+                          <div style={{ fontFamily: MONO, fontSize: '11px', color: C.muted }}>{fmtFecha(c.fecha)}</div>
+                        </>) : <span style={{ color: C.muted }}>—</span>}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <aside style={{ display: 'grid', gap: '16px', alignContent: 'start', minWidth: 0 }}>
+          <section style={{ ...card, borderTop: `3px solid ${vencidas > 0 ? C.danger : C.terra}` }} aria-label="Próximas acciones">
+            <div style={{ ...cinzel(C.terra, 10), marginBottom: '12px' }}>Próximas acciones</div>
+            {acciones.length === 0 && <div style={{ fontSize: '13px', color: C.muted }}>Ningún prospecto activo tiene próxima acción. Defínela en su ficha.</div>}
+            <div style={{ display: 'grid', gap: '10px' }}>
+              {acciones.map(p => {
+                const venc = !!p.proxima_fecha && p.proxima_fecha < hoy
+                return (
+                  <button key={p.id} onClick={() => onOpen(p.id)} className="bd-mini"
+                    style={{ textAlign: 'left', cursor: 'pointer', background: venc ? 'rgba(224,122,95,0.10)' : 'rgba(14,16,24,0.55)', border: `1px solid ${venc ? 'rgba(224,122,95,0.45)' : 'rgba(255,255,255,0.06)'}`, borderRadius: '8px', padding: '10px 12px', color: C.parch }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                      <span style={{ fontWeight: 600, fontSize: '13px' }}>{p.short_name}</span>
+                      <span style={{ fontFamily: MONO, fontSize: '11px', color: venc ? C.danger : C.gold }}>{fmtFecha(p.proxima_fecha)}</span>
+                    </div>
+                    <div style={{ fontSize: '12px', color: venc ? C.danger : C.muted, marginTop: '2px' }}>{p.proxima_accion ?? '—'}{venc && ' · vencida'}</div>
+                  </button>
+                )
+              })}
+            </div>
+          </section>
+
+          <section style={card} aria-label="Actividad reciente">
+            <div style={{ ...cinzel(C.terra, 10), marginBottom: '12px' }}>Actividad reciente</div>
+            {actividad.length === 0 && <div style={{ fontSize: '13px', color: C.muted }}>Sin comunicaciones registradas.</div>}
+            <div style={{ display: 'grid', gap: '12px' }}>
+              {actividad.map(({ c, p }) => (
+                <div key={c.id} style={{ borderLeft: `2px solid ${c.sentido === 'interno' ? C.amatistaLight : C.terra}`, paddingLeft: '10px' }}>
+                  <div style={{ fontSize: '11px', color: C.muted }}>
+                    <span style={{ color: C.parch, fontWeight: 600 }}>{p.short_name}</span> · <span style={{ fontFamily: MONO }}>{fmtFecha(c.fecha)}</span> · {CANAL_LABEL[c.canal] ?? c.canal}
+                  </div>
+                  <div style={{ fontSize: '12px', color: C.parch, lineHeight: 1.4 }}>{c.resumen}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </aside>
       </div>
     </>
-  )
-}
-
-function ProspectCard({ p, params, onOpen }: { p: Prospect; params: FeeParams; onOpen: () => void }) {
-  const q = p.quotes[0]
-  const c = p.comms[0]
-  const vencida = !!p.proxima_fecha && p.proxima_fecha < hoyISO() && !INACTIVAS.has(p.etapa)
-  const tier = p.unidades != null ? TIER_NOMBRES[tierFromSize(params, p.unidades, Number(p.m2_privados ?? 0), p.es_casas)] : null
-  return (
-    <button className="bd-card-click" onClick={onOpen}
-      style={{ ...card, padding: '14px', textAlign: 'left', cursor: 'pointer', display: 'grid', gap: '6px', color: C.parch, background: C.carbon, borderLeft: `3px solid ${C.terra}` }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'baseline' }}>
-        <span style={{ fontFamily: "'EB Garamond',serif", fontSize: '18px' }}>{p.short_name}</span>
-        {tier && <span style={{ ...cinzel(C.amatistaLight, 7) }}>{tier}</span>}
-      </div>
-      {q ? (
-        <div style={{ fontFamily: MONO, fontSize: '12px' }}>
-          ${usd(Number(q.honorario))}<span style={{ color: C.faint }}> · {Math.round(Number(q.margen) * 100)} % · {q.estado}</span>
-        </div>
-      ) : <div style={{ fontSize: '12px', color: C.faint }}>Sin cotización</div>}
-      {(p.proxima_accion || p.proxima_fecha) && (
-        <div style={{ fontSize: '12px', color: vencida ? C.danger : C.muted }}>
-          {p.proxima_accion ?? 'Próxima acción'} · <span style={{ fontFamily: MONO }}>{fmtFecha(p.proxima_fecha)}</span>{vencida && ' · vencida'}
-        </div>
-      )}
-      {c && (
-        <div style={{ fontSize: '11px', color: C.faint }}>
-          Última: {CANAL_LABEL[c.canal] ?? c.canal} · <span style={{ fontFamily: MONO }}>{fmtFecha(c.fecha)}</span>
-        </div>
-      )}
-    </button>
   )
 }
 
