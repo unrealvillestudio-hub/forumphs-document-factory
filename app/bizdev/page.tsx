@@ -16,6 +16,10 @@ import {
 import { buildLetter, buildProposalDocx, letterAmounts } from '@/lib/bizdev/proposal'
 import { CARTERA } from '@/lib/bizdev/cartera'
 import { buildBrief } from '@/lib/bizdev/brief'
+import {
+  normalizarContacto, esDominioPersonal, pendientes, ultimaLectura, TEMPERATURA_LABEL,
+  type Contacto, type Insight, type Accion,
+} from '@/lib/bizdev/insights'
 
 // ─── Tipos de datos (filas de unrlvl-db) ─────────────────────────
 interface Quote {
@@ -34,6 +38,8 @@ interface Prospect {
   etapa: string; contacto_nombre: string | null; contacto_rol: string | null; proxima_accion: string | null
   proxima_fecha: string | null; notas: string | null; created_at: string; updated_at: string
   quotes: Quote[]; comms: Comm[]
+  // 08_bizdev_analisis_de_correos.sql. Opcionales: la API las trae siempre, pero una fila sin ellas no rompe la vista.
+  contacts?: Contacto[]; insights?: Insight[]; actions?: Accion[]
 }
 
 type View = 'dashboard' | 'calc' | 'prop'
@@ -251,6 +257,8 @@ const ETAPA_COLOR: Record<string, string> = {
   contacto: '#B79CCB', levantamiento: '#A07FBF', confidencialidad: '#8E62AD', cotizado: C.terra,
   negociacion: '#E3894F', ganado: C.success, perdido: C.danger, pausado: '#8C8A88',
 }
+const TEMP_COLOR: Record<string, string> = { frio: '#8FB8DE', tibio: C.gold, caliente: C.terra }
+const PRIO_COLOR: Record<string, string> = { alta: C.danger, media: C.gold, baja: C.muted }
 const TIER_COLOR: Record<string, string> = { Esencial: '#B79CCB', Profesional: C.terra, 'Élite': C.gold, 'Bajo el piso': C.danger }
 
 function Badge({ text, color, solid = false }: { text: string; color: string; solid?: boolean }) {
@@ -353,6 +361,10 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
     .slice().sort((a, b) => ETAPAS.findIndex(e => e.key === b.etapa) - ETAPAS.findIndex(e => e.key === a.etapa))
   const acciones = activos.filter(p => p.proxima_fecha || p.proxima_accion)
     .slice().sort((a, b) => (a.proxima_fecha ?? '9999').localeCompare(b.proxima_fecha ?? '9999'))
+  const porDecidir = prospects.filter(p => !INACTIVAS.has(p.etapa))
+    .flatMap(p => pendientes(p.actions ?? []).map(a => ({ a, p })))
+    .sort((x, y) => ({ alta: 0, media: 1, baja: 2 }[x.a.prioridad] - { alta: 0, media: 1, baja: 2 }[y.a.prioridad])
+      || (x.a.fecha_sugerida ?? '9999').localeCompare(y.a.fecha_sugerida ?? '9999'))
   const actividad = prospects.flatMap(p => p.comms.filter(c => enRango(c.fecha, rango)).map(c => ({ c, p })))
     .sort((a, b) => b.c.fecha.localeCompare(a.c.fecha)).slice(0, 6)
   const maxEtapa = Math.max(1, ...ETAPAS.map(e => enPeriodo.filter(p => p.etapa === e.key).length))
@@ -488,6 +500,16 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
                       <td>
                         <div style={{ fontFamily: "'EB Garamond',serif", fontSize: '19px', color: C.parch, lineHeight: 1.1, whiteSpace: 'nowrap' }}>{p.short_name}</div>
                         <div style={{ fontFamily: MONO, fontSize: '10px', color: C.muted }}>{p.code}</div>
+                        {(() => {
+                          const n = pendientes(p.actions ?? []).length
+                          const l = ultimaLectura(p.insights ?? [])
+                          return (n > 0 || l?.temperatura) ? (
+                            <div style={{ display: 'flex', gap: '6px', marginTop: '5px', flexWrap: 'wrap' }}>
+                              {n > 0 && <Badge text={`${n} por decidir`} color={C.mint} />}
+                              {l?.temperatura && <Badge text={TEMPERATURA_LABEL[l.temperatura]} color={TEMP_COLOR[l.temperatura]} />}
+                            </div>
+                          ) : null
+                        })()}
                       </td>
                       <td><Badge text={et?.label ?? p.etapa} color={ETAPA_COLOR[p.etapa]} /></td>
                       <td>{tier ? <Badge text={tier} color={TIER_COLOR[tier]} /> : <span style={{ color: C.muted }}>—</span>}</td>
@@ -523,6 +545,28 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
         </section>
 
         <aside style={{ display: 'grid', gap: '16px', alignContent: 'start', minWidth: 0 }}>
+          {porDecidir.length > 0 && (
+            <section style={{ ...card, borderTop: `3px solid ${C.mint}`, background: `linear-gradient(160deg, ${C.mintSoft}, ${C.carbon} 70%)` }} aria-label="Acciones propuestas por decidir">
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '12px' }}>
+                <div style={{ ...cinzel(C.mint, 10) }}>Por decidir</div>
+                <span style={{ fontFamily: MONO, fontSize: '13px', fontWeight: 700, color: C.mint }}>{porDecidir.length}</span>
+                <span style={{ fontSize: '11px', color: C.muted }}>propuestas de la lectura de correos</span>
+              </div>
+              <div style={{ display: 'grid', gap: '10px' }}>
+                {porDecidir.slice(0, 6).map(({ a, p }) => (
+                  <button key={a.id} onClick={() => onOpen(p.id)} className="bd-mini"
+                    style={{ textAlign: 'left', cursor: 'pointer', background: 'rgba(14,16,24,0.55)', border: '1px solid rgba(79,216,184,0.25)', borderRadius: '8px', padding: '10px 12px', color: C.parch }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                      <span style={{ fontWeight: 600, fontSize: '13px' }}>{p.short_name}</span>
+                      <span style={{ fontSize: '11px', fontWeight: 600, color: PRIO_COLOR[a.prioridad] }}>{a.prioridad}</span>
+                    </div>
+                    <div style={{ fontSize: '12px', color: C.parch, marginTop: '2px' }}>{a.accion}</div>
+                    {a.fecha_sugerida && <div style={{ fontFamily: MONO, fontSize: '11px', color: C.muted }}>sugerida para {fmtFecha(a.fecha_sugerida)}</div>}
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
           <section style={{ ...card, borderTop: `3px solid ${vencidas > 0 ? C.danger : C.terra}` }} aria-label="Próximas acciones">
             <div style={{ ...cinzel(C.terra, 10), marginBottom: '12px' }}>Próximas acciones</div>
             {acciones.length === 0 && <div style={{ fontSize: '13px', color: C.muted }}>Ningún prospecto activo tiene próxima acción. Defínela en su ficha.</div>}
@@ -656,6 +700,10 @@ function Ficha({ p, params, onClose, onNuevaCotizacion, onReload, onError }: {
           ))}
         </section>
 
+        <LecturaCorreos p={p} busy={busy} run={run} />
+
+        <ContactosSeguimiento p={p} busy={busy} run={run} onError={onError} />
+
         <div style={{ ...card, display: 'grid', gap: '10px' }}>
           <div style={{ ...cinzel(C.amatistaLight, 8) }}>Seguimiento</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
@@ -705,7 +753,7 @@ function Ficha({ p, params, onClose, onNuevaCotizacion, onReload, onError }: {
             <div key={`c-${it.c.id}`} style={{ borderLeft: `2px solid ${it.c.sentido === 'interno' ? C.amatista : it.c.sentido === 'recibido' ? C.mint : C.terra}`, paddingLeft: '12px', display: 'grid', gap: '2px' }}>
               <div style={{ fontSize: '11px', color: C.muted }}>
                 <span style={{ fontFamily: MONO }}>{fmtFecha(it.c.fecha)}</span> · {CANAL_LABEL[it.c.canal] ?? it.c.canal} · {it.c.sentido}
-                {it.c.origen !== 'manual' && ` · ${it.c.origen === 'document_factory' ? 'Document Factory' : it.c.origen}`}
+                {it.c.origen !== 'manual' && ` · ${it.c.origen === 'document_factory' ? 'Document Factory' : it.c.origen === 'communications_service' ? 'lectura de correo' : it.c.origen}`}
               </div>
               <div style={{ fontSize: '13px' }}>
                 {it.c.doc_ref
@@ -731,6 +779,138 @@ function Ficha({ p, params, onClose, onNuevaCotizacion, onReload, onError }: {
         </div>
       </div>
     </div>
+  )
+}
+
+
+// ─── Lectura de correos y acciones propuestas (08_bizdev_analisis_de_correos.sql) ───
+// Lo escribe unrlvl-communications-services con fphs_bizdev_ingest(). Aquí solo se lee y se decide.
+function LecturaCorreos({ p, busy, run }: { p: Prospect; busy: boolean; run: (fn: () => Promise<unknown>) => Promise<void> }) {
+  const insights = [...(p.insights ?? [])].sort((a, b) => b.created_at.localeCompare(a.created_at))
+  const acciones = p.actions ?? []
+  const porDecidir = pendientes(acciones)
+  const decididas = acciones.filter(a => a.estado !== 'pendiente')
+  const [verTodas, setVerTodas] = useState(false)
+  const decidir = (id: string, estado: 'aprobada' | 'descartada') =>
+    run(() => api('/api/bizdev/actions', { method: 'PATCH', body: JSON.stringify({ id, estado }) }))
+  const comm = (id: string | null) => p.comms.find(c => c.id === id)
+
+  return (
+    <section style={{ ...card, display: 'grid', gap: '12px', borderTop: `3px solid ${C.mint}` }} aria-label="Lectura de correos">
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+        <div style={{ ...cinzel(C.mint, 9) }}>Lectura de correos</div>
+        {porDecidir.length > 0 && <Badge text={`${porDecidir.length} por decidir`} color={C.mint} solid />}
+      </div>
+      {insights.length === 0 && porDecidir.length === 0 && (
+        <div style={{ fontSize: '12px', color: C.muted, lineHeight: 1.5 }}>
+          Todavía no hay lecturas. Cuando el servicio de comunicaciones lea un correo de este prospecto, aquí aparecen
+          su interpretación y las acciones propuestas. Para eso el prospecto necesita al menos un contacto de seguimiento.
+        </div>
+      )}
+
+      {porDecidir.length > 0 && (
+        <div style={{ display: 'grid', gap: '8px' }}>
+          <div style={{ fontSize: '11px', fontWeight: 600, color: C.mint }}>Acciones propuestas · al aprobar una, pasa a ser la próxima acción</div>
+          {porDecidir.map(a => (
+            <div key={a.id} style={{ background: 'rgba(14,16,24,0.55)', border: '1px solid rgba(79,216,184,0.25)', borderRadius: '8px', padding: '10px 12px', display: 'grid', gap: '8px' }}>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'baseline' }}>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: PRIO_COLOR[a.prioridad], textTransform: 'uppercase', letterSpacing: '0.06em' }}>{a.prioridad}</span>
+                <span style={{ fontSize: '13px', color: C.parch }}>{a.accion}</span>
+              </div>
+              {a.fecha_sugerida && <div style={{ fontFamily: MONO, fontSize: '11px', color: C.muted }}>Sugerida para {fmtFecha(a.fecha_sugerida)}</div>}
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button disabled={busy} onClick={() => decidir(a.id, 'aprobada')}
+                  style={{ ...btn(false, !busy), padding: '5px 12px', fontSize: '8px', borderColor: 'rgba(79,216,184,0.6)', color: C.mint }}>Aprobar</button>
+                <button disabled={busy} onClick={() => decidir(a.id, 'descartada')}
+                  style={{ ...btn(false, !busy), padding: '5px 12px', fontSize: '8px' }}>Descartar</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {insights.slice(0, verTodas ? undefined : 2).map(i => {
+        const c = comm(i.comm_id)
+        return (
+          <div key={i.id} style={{ borderLeft: `2px solid ${i.temperatura ? TEMP_COLOR[i.temperatura] : C.mint}`, paddingLeft: '10px', display: 'grid', gap: '4px' }}>
+            <div style={{ fontSize: '11px', color: C.muted, display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontFamily: MONO }}>{fmtFecha(c?.fecha ?? i.created_at)}</span>
+              {c && <span>· correo {c.sentido}</span>}
+              {i.temperatura && <Badge text={TEMPERATURA_LABEL[i.temperatura]} color={TEMP_COLOR[i.temperatura]} />}
+            </div>
+            {c && <div style={{ fontSize: '12px', color: C.muted }}>{c.resumen}</div>}
+            <div style={{ fontSize: '13px', color: C.parch, lineHeight: 1.45 }}>{i.interpretacion}</div>
+            {i.objeciones.length > 0 && <div style={{ fontSize: '12px', color: C.gold }}>Objeciones: {i.objeciones.join(' · ')}</div>}
+          </div>
+        )
+      })}
+      {insights.length > 2 && (
+        <button onClick={() => setVerTodas(v => !v)} style={{ ...btn(false), justifySelf: 'start', padding: '4px 10px', fontSize: '8px' }}>
+          {verTodas ? 'Ver menos' : `Ver las ${insights.length} lecturas`}
+        </button>
+      )}
+      {decididas.length > 0 && (
+        <div style={{ fontSize: '11px', color: C.muted }}>
+          Decididas: {decididas.filter(a => a.estado === 'aprobada').length} aprobada(s) · {decididas.filter(a => a.estado === 'descartada').length} descartada(s)
+        </div>
+      )}
+    </section>
+  )
+}
+
+// ─── Contactos de seguimiento: los correos y dominios de los que el servicio sigue los hilos ───
+function ContactosSeguimiento({ p, busy, run, onError }: {
+  p: Prospect; busy: boolean; run: (fn: () => Promise<unknown>) => Promise<void>; onError: (e: string | null) => void
+}) {
+  const contactos = p.contacts ?? []
+  const [tipo, setTipo] = useState<'email' | 'dominio'>('email')
+  const [valor, setValor] = useState('')
+  const [rol, setRol] = useState('')
+  const personal = tipo === 'dominio' && esDominioPersonal(valor)
+  const agregar = () => {
+    let c: { tipo: string; valor: string }
+    try { c = normalizarContacto(tipo, valor) } catch (e) { onError(e instanceof Error ? e.message : 'Contacto inválido'); return }
+    return run(async () => {
+      await api('/api/bizdev/contacts', { method: 'POST', body: JSON.stringify({ prospect_id: p.id, ...c, rol: rol.trim() || null }) })
+      setValor(''); setRol('')
+    })
+  }
+  const quitar = (id: string) => run(() => api(`/api/bizdev/contacts?id=${id}`, { method: 'DELETE' }))
+
+  return (
+    <section style={{ ...card, display: 'grid', gap: '10px' }} aria-label="Contactos de seguimiento">
+      <div style={{ ...cinzel(C.amatistaLight, 8) }}>Contactos de seguimiento de correo</div>
+      <div style={{ fontSize: '12px', color: C.muted, lineHeight: 1.5 }}>
+        El servicio de comunicaciones sigue solo los correos de estas direcciones o dominios. Un correo que no es de ningún
+        prospecto no se registra: llega un aviso por Telegram para que lo revises.
+      </div>
+      {contactos.length === 0 && <div style={{ fontSize: '12px', color: C.gold }}>Sin contactos: los correos de este prospecto no se siguen.</div>}
+      {contactos.map(c => (
+        <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
+          <Badge text={c.tipo === 'email' ? 'correo' : 'dominio'} color={c.tipo === 'email' ? C.mint : C.amatistaLight} />
+          <span style={{ fontFamily: MONO, fontSize: '12px', overflowWrap: 'anywhere' }}>{c.tipo === 'dominio' ? `@${c.valor}` : c.valor}</span>
+          {c.rol && <span style={{ color: C.muted, fontSize: '12px' }}>· {c.rol}</span>}
+          <button aria-label={`Quitar ${c.valor}`} disabled={busy} onClick={() => quitar(c.id)}
+            style={{ ...btn(false, !busy), marginLeft: 'auto', padding: '2px 8px', fontSize: '10px' }}>×</button>
+        </div>
+      ))}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,110px) minmax(0,1fr)', gap: '8px' }}>
+        <select aria-label="Tipo de contacto" style={{ ...inputStyle, cursor: 'pointer' }} value={tipo} onChange={e => setTipo(e.target.value as 'email' | 'dominio')}>
+          <option value="email">Correo</option><option value="dominio">Dominio</option>
+        </select>
+        <input aria-label="Correo o dominio" style={{ ...inputStyle, fontFamily: MONO, fontSize: '12px' }} value={valor}
+          placeholder={tipo === 'email' ? 'junta@ph.com' : 'ph.com'} onChange={e => setValor(e.target.value)} />
+      </div>
+      <input aria-label="Rol (opcional)" style={inputStyle} value={rol} placeholder="Rol (opcional), p. ej. Presidente de la Junta" onChange={e => setRol(e.target.value)} />
+      {personal && (
+        <div style={{ fontSize: '12px', color: C.danger }}>
+          {valor.replace(/^@/, '')} es un proveedor de correo personal: como dominio, haría pasar por de este prospecto los correos de cualquiera. Agrega la dirección exacta.
+        </div>
+      )}
+      <button style={{ ...btn(true, !!valor.trim() && !busy && !personal), justifySelf: 'start' }} disabled={!valor.trim() || busy || personal} onClick={agregar}>
+        Agregar contacto
+      </button>
+    </section>
   )
 }
 

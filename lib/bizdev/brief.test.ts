@@ -34,3 +34,22 @@ test('brief: sin mensajes del prospecto lo dice en vez de inventarlos', () => {
   assert.match(b.texto, /Todavía no se le ha enviado ninguna cotización/)
   assert.match(b.texto, /ENTRADAS \(mensajes del prospecto\)\n- Ninguna registrada\./)
 })
+
+test('brief: suma la lectura de correos y las acciones por decidir, sin cambiar el resto', () => {
+  const b = buildBrief({
+    ...base,
+    insights: [{ id: 'i1', prospect_id: 'p', comm_id: null, origen: 'communications_service', interpretacion: 'Interés real; la objeción es de alcance.',
+      temperatura: 'tibio', objeciones: ['alcance del personal'], generado_por: null, created_at: '2026-11-02T15:00:00Z' }],
+    actions: [
+      { id: 'a1', prospect_id: 'p', insight_id: 'i1', accion: 'Proponer reunión', fecha_sugerida: null, prioridad: 'media', estado: 'pendiente', decidida_el: null, created_at: '2026-11-02T15:00:00Z' },
+      { id: 'a2', prospect_id: 'p', insight_id: 'i1', accion: 'Enviar desglose de personal', fecha_sugerida: '2026-11-05', prioridad: 'alta', estado: 'pendiente', decidida_el: null, created_at: '2026-11-02T15:00:00Z' },
+      { id: 'a3', prospect_id: 'p', insight_id: 'i1', accion: 'Ya decidida', fecha_sugerida: null, prioridad: 'alta', estado: 'descartada', decidida_el: '2026-11-02T16:00:00Z', created_at: '2026-11-02T15:00:00Z' },
+    ],
+  }, '2026-11-03')
+  assert.match(b.texto, /Lectura más reciente \(2026-11-02, tibio\): Interés real; la objeción es de alcance\./)
+  assert.match(b.texto, /Objeciones: alcance del personal\./)
+  assert.match(b.texto, /Acciones propuestas por decidir: 2 \(la más urgente: Enviar desglose de personal\)\./)
+  assert.match(b.texto, /ACCIONES PROPUESTAS POR DECIDIR\n- \[alta\] Enviar desglose de personal \(sugerida para 2026-11-05\)\n- \[media\] Proponer reunión/)
+  assert.equal(b.porDecidir.length, 2)
+  assert.doesNotMatch(buildBrief(base, '2026-11-03').texto, /ACCIONES PROPUESTAS|Lectura más reciente/)
+})

@@ -1,6 +1,7 @@
 /**
  * /api/bizdev/prospects
- *   GET   → lista de prospectos con sus cotizaciones y comunicaciones (más recientes primero).
+ *   GET   → lista de prospectos con cotizaciones, comunicaciones, contactos de seguimiento, lecturas de
+ *           correo y acciones propuestas (08_bizdev_analisis_de_correos.sql), más recientes primero.
  *   POST  → crea un prospecto. El código FPHS-P-NNNN lo asigna la base.
  *   PATCH → { id, etapa?, proxima_accion?, proxima_fecha?, notas?, contacto_nombre?, contacto_rol? }.
  */
@@ -24,7 +25,9 @@ export async function GET() {
   try {
     const rows = await sb(
       'fphs_prospects?select=*,quotes:fphs_quotes(*),comms:fphs_prospect_comms(*)' +
-      '&order=updated_at.desc&quotes.order=created_at.desc&comms.order=fecha.desc')
+      ',contacts:fphs_prospect_contacts(*),insights:fphs_prospect_insights(*),actions:fphs_prospect_actions(*)' +
+      '&order=updated_at.desc&quotes.order=created_at.desc&comms.order=fecha.desc' +
+      '&contacts.order=created_at.asc&insights.order=created_at.desc&actions.order=created_at.desc')
     return Response.json({ prospects: rows })
   } catch (e) { return errorResponse(e) }
 }
