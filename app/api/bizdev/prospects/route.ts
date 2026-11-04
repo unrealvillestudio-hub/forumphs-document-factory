@@ -3,7 +3,9 @@
  *   GET   → lista de prospectos con cotizaciones, comunicaciones, contactos de seguimiento, lecturas de
  *           correo y acciones propuestas (08_bizdev_analisis_de_correos.sql), más recientes primero.
  *   POST  → crea un prospecto. El código FPHS-P-NNNN lo asigna la base.
- *   PATCH → { id, etapa?, proxima_accion?, proxima_fecha?, notas?, contacto_nombre?, contacto_rol? }.
+ *   PATCH → { id, etapa?, proxima_accion?, proxima_fecha?, notas?, contacto_nombre?, contacto_rol?, archivado? }.
+ *           archivado: true | false archiva o desarchiva (09_bizdev_historial_archivo_prueba.sql). Archivar no
+ *           cambia la etapa ni borra nada; el prospecto sale del dashboard y de los indicadores.
  */
 import { sb, errorResponse, ETAPAS } from '@/lib/bizdev/db'
 
@@ -49,7 +51,11 @@ export async function PATCH(req: Request) {
     const body = await req.json() as Record<string, unknown>
     const id = String(body.id ?? '')
     if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error('id inválido')
-    const row = { ...pick(body), updated_at: new Date().toISOString() }
+    const row: Record<string, unknown> = { ...pick(body), updated_at: new Date().toISOString() }
+    if ('archivado' in body) {
+      if (typeof body.archivado !== 'boolean') throw new Error('archivado debe ser true o false')
+      row.archivado_el = body.archivado ? new Date().toISOString() : null
+    }
     const [updated] = await sb<unknown[]>(`fphs_prospects?id=eq.${id}`, {
       method: 'PATCH', body: JSON.stringify(row), prefer: 'return=representation',
     })

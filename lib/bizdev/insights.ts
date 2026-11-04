@@ -10,7 +10,13 @@
 export type TipoContacto = 'email' | 'dominio'
 export type EstadoAccion = 'pendiente' | 'aprobada' | 'descartada'
 
-export interface Contacto { id: string; prospect_id: string; tipo: TipoContacto; valor: string; rol: string | null; created_at: string }
+export interface Contacto {
+  id: string; prospect_id: string; tipo: TipoContacto; valor: string; rol: string | null; created_at: string
+  // 09_bizdev_historial_archivo_prueba.sql: estado de la revisión del historial del contacto.
+  historial_estado?: 'en_curso' | 'completado' | 'error' | null
+  historial_solicitado_el?: string | null; historial_terminado_el?: string | null
+  historial_resultado?: Record<string, unknown> | null
+}
 export interface Insight {
   id: string; prospect_id: string; comm_id: string | null; origen: string; interpretacion: string
   temperatura: 'frio' | 'tibio' | 'caliente' | null; objeciones: string[]; generado_por: string | null; created_at: string
@@ -59,3 +65,40 @@ export const ultimaLectura = (insights: Insight[]): Insight | null =>
   insights.length ? [...insights].sort((a, b) => b.created_at.localeCompare(a.created_at))[0] : null
 
 export const TEMPERATURA_LABEL: Record<string, string> = { frio: 'Frío', tibio: 'Tibio', caliente: 'Caliente' }
+
+// ─── Revisión del historial de un contacto (09_bizdev_historial_archivo_prueba.sql) ───
+/** Meses hacia atrás que revisa el servicio. Decisión de Sam, 2026-11-04. */
+export const HISTORIAL_MESES = 12
+/** Una revisión en curso sin aviso de fin después de este tiempo se da por perdida y se puede repetir. */
+export const HISTORIAL_TIMEOUT_MIN = 30
+
+export type EstadoHistorial = 'nunca' | 'en_curso' | 'sin_respuesta' | 'completado' | 'error'
+
+const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+
+/** Estado legible de la revisión del historial de un contacto. `ahora` en ms, para que sea puro. */
+export function estadoHistorial(c: Contacto, ahora: number): { estado: EstadoHistorial; texto: string; puedeRevisar: boolean } {
+  const r = c.historial_resultado ?? {}
+  if (!c.historial_estado) return { estado: 'nunca', texto: 'Historial sin revisar.', puedeRevisar: true }
+  if (c.historial_estado === 'en_curso') {
+    const t = c.historial_solicitado_el ? Date.parse(c.historial_solicitado_el) : NaN
+    const min = Number.isFinite(t) ? (ahora - t) / 60000 : Infinity
+    if (min > HISTORIAL_TIMEOUT_MIN) {
+      return { estado: 'sin_respuesta', texto: `El servicio no avisó el fin de la revisión (hace más de ${HISTORIAL_TIMEOUT_MIN} min). Puedes repetirla.`, puedeRevisar: true }
+    }
+    return { estado: 'en_curso', texto: `Revisando los últimos ${HISTORIAL_MESES} meses de correos con este contacto…`, puedeRevisar: false }
+  }
+  if (c.historial_estado === 'error') {
+    return { estado: 'error', texto: `La revisión falló: ${String(r.error ?? 'sin detalle')}`, puedeRevisar: true }
+  }
+  const leidos = num(r.leidos); const asentados = num(r.asentados); const dup = num(r.duplicados)
+  const base = [asentados != null ? `${asentados} registrado(s)` : null, leidos != null ? `de ${leidos} leído(s)` : null].filter(Boolean).join(' ')
+  const partes = [base || null, dup ? `${dup} ya estaban registrados` : null].filter(Boolean).join('; ')
+  const trunc = r.truncado === true ? ' Hubo más correos de los que caben en una revisión: repítela para seguir.' : ''
+  return { estado: 'completado', texto: `Historial revisado${partes ? `: ${partes}` : ''}.${trunc}`, puedeRevisar: true }
+}
+
+// ─── Indicadores (Sam, 2026-11-04) ───
+/** Un prospecto cuenta en los indicadores si no está archivado y no es de prueba. */
+export const cuentaEnIndicadores = (p: { archivado_el?: string | null; es_prueba?: boolean | null }) =>
+  !p.archivado_el && !p.es_prueba

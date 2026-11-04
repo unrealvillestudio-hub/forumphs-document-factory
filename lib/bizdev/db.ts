@@ -52,6 +52,13 @@ export const CANALES = ['whatsapp', 'correo', 'llamada', 'reunion', 'documento']
 export const SENTIDOS = ['enviado', 'recibido', 'interno'] as const
 export const ESTADOS_QUOTE = ['borrador', 'enviada', 'aceptada', 'rechazada'] as const
 
+/**
+ * Marca con la que este Document Factory se presenta ante unrlvl-communications-services. El Document Factory
+ * es exclusivo de ForumPHs; el servicio, que es capa compartida, la usa como clave de su configuración
+ * (public.comm_service_config.brand_id) y no la tiene en su código.
+ */
+export const COMM_BRAND_ID = 'ForumPHs'
+
 export function errorResponse(e: unknown) {
   const status = e instanceof DbError ? e.status : 400
   const message = e instanceof Error ? e.message : String(e)

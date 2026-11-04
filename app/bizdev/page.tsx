@@ -18,6 +18,7 @@ import { CARTERA } from '@/lib/bizdev/cartera'
 import { buildBrief } from '@/lib/bizdev/brief'
 import {
   normalizarContacto, esDominioPersonal, pendientes, ultimaLectura, TEMPERATURA_LABEL,
+  cuentaEnIndicadores, estadoHistorial,
   type Contacto, type Insight, type Accion,
 } from '@/lib/bizdev/insights'
 
@@ -40,6 +41,8 @@ interface Prospect {
   quotes: Quote[]; comms: Comm[]
   // 08_bizdev_analisis_de_correos.sql. Opcionales: la API las trae siempre, pero una fila sin ellas no rompe la vista.
   contacts?: Contacto[]; insights?: Insight[]; actions?: Accion[]
+  // 09_bizdev_historial_archivo_prueba.sql. Archivado o de prueba: fuera de los indicadores.
+  archivado_el?: string | null; es_prueba?: boolean
 }
 
 type View = 'dashboard' | 'calc' | 'prop'
@@ -305,18 +308,28 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
   const [desde, setDesde] = useState('')
   const [hasta, setHasta] = useState('')
   const rango = rangoDe(modo, desde, hasta)
+  // Archivo (Sam, 2026-11-04): los archivados salen del dashboard y se ven con «Ver archivados».
+  const [verArchivados, setVerArchivados] = useState(false)
+  const vivos = prospects.filter(p => !p.archivado_el)
+  const archivados = prospects.filter(p => !!p.archivado_el)
+  const visibles = verArchivados ? archivados : vivos
+  // Indicadores: sin archivados ni prospectos de prueba (Sam, 2026-11-04).
+  const medibles = prospects.filter(cuentaEnIndicadores)
+  const hayPrueba = vivos.some(p => p.es_prueba)
   // Con periodo: un prospecto entra si se creó, se cotizó o tuvo una comunicación dentro del rango.
   const enPeriodo = rango
-    ? prospects.filter(p => enRango(p.created_at, rango) || p.quotes.some(q => enRango(q.created_at, rango)) || p.comms.some(c => enRango(c.fecha, rango)))
-    : prospects
-  const activos = prospects.filter(p => !INACTIVAS.has(p.etapa))
+    ? visibles.filter(p => enRango(p.created_at, rango) || p.quotes.some(q => enRango(q.created_at, rango)) || p.comms.some(c => enRango(c.fecha, rango)))
+    : visibles
+  const activos = medibles.filter(p => !INACTIVAS.has(p.etapa))
+  // Listas de trabajo (acciones, por decidir, actividad): todo lo no archivado, prueba incluida y marcada.
+  const enCurso = vivos.filter(p => !INACTIVAS.has(p.etapa))
   // Cartera: última cotización de cada activo; con periodo, solo si esa cotización es del rango.
   const cotizados = activos.filter(p => { const q = ultimaEnviada(p); return !!q && enRango(q.enviada_el ?? q.created_at, rango) })
   const cartera = cotizados.reduce((s, p) => s + Number(ultimaEnviada(p)!.honorario), 0)
-  const enviadas30 = prospects.flatMap(p => p.quotes)
+  const enviadas30 = medibles.flatMap(p => p.quotes)
     .filter(q => q.estado === 'enviada' && q.enviada_el && (rango ? enRango(q.enviada_el, rango) : q.enviada_el >= hace30)).length
-  const ganados = prospects.filter(p => p.etapa === 'ganado').length
-  const perdidos = prospects.filter(p => p.etapa === 'perdido').length
+  const ganados = medibles.filter(p => p.etapa === 'ganado').length
+  const perdidos = medibles.filter(p => p.etapa === 'perdido').length
   const vencidas = activos.filter(p => p.proxima_fecha && p.proxima_fecha < hoy).length
 
   const [filtro, setFiltro] = useState<string | null>(null)
@@ -349,7 +362,8 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
   const kpis: Kpi[] = [
     { k: 'Cartera cotizada / mes', v: cotizados.length ? `$${usd(cartera)}` : '—', hero: true, color: C.terra,
       sub: cotizados.length ? `${cotizados.length} prospecto(s) con cotización · sin ITBMS` : rango ? 'Sin cotizaciones en el periodo' : 'Sin cotizaciones guardadas todavía' },
-    { k: 'Prospectos activos', v: String(activos.length), color: C.amatistaLight, sub: `${prospects.length} en total` },
+    { k: 'Prospectos activos', v: String(activos.length), color: C.amatistaLight,
+      sub: `${medibles.length} en total` + (archivados.length ? ` · ${archivados.length} archivado(s)` : '') + (hayPrueba ? ' · la prueba no cuenta' : '') },
     { k: 'Propuestas enviadas', v: String(enviadas30), color: C.mint, sub: rango ? 'en el periodo' : 'últimos 30 días' },
     { k: 'Tasa de cierre', v: ganados + perdidos ? `${Math.round((ganados / (ganados + perdidos)) * 100)} %` : '—', color: C.success,
       sub: `${ganados} ganado(s) · ${perdidos} perdido(s)` },
@@ -359,15 +373,17 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
 
   const lista = (filtro ? enPeriodo.filter(p => p.etapa === filtro) : enPeriodo)
     .slice().sort((a, b) => ETAPAS.findIndex(e => e.key === b.etapa) - ETAPAS.findIndex(e => e.key === a.etapa))
-  const acciones = activos.filter(p => p.proxima_fecha || p.proxima_accion)
+  const acciones = enCurso.filter(p => p.proxima_fecha || p.proxima_accion)
     .slice().sort((a, b) => (a.proxima_fecha ?? '9999').localeCompare(b.proxima_fecha ?? '9999'))
-  const porDecidir = prospects.filter(p => !INACTIVAS.has(p.etapa))
+  const porDecidir = enCurso
     .flatMap(p => pendientes(p.actions ?? []).map(a => ({ a, p })))
     .sort((x, y) => ({ alta: 0, media: 1, baja: 2 }[x.a.prioridad] - { alta: 0, media: 1, baja: 2 }[y.a.prioridad])
       || (x.a.fecha_sugerida ?? '9999').localeCompare(y.a.fecha_sugerida ?? '9999'))
-  const actividad = prospects.flatMap(p => p.comms.filter(c => enRango(c.fecha, rango)).map(c => ({ c, p })))
+  const actividad = vivos.flatMap(p => p.comms.filter(c => enRango(c.fecha, rango)).map(c => ({ c, p })))
     .sort((a, b) => b.c.fecha.localeCompare(a.c.fecha)).slice(0, 6)
-  const maxEtapa = Math.max(1, ...ETAPAS.map(e => enPeriodo.filter(p => p.etapa === e.key).length))
+  // El embudo es un indicador: no cuenta el prospecto de prueba.
+  const enEmbudo = enPeriodo.filter(p => !p.es_prueba)
+  const maxEtapa = Math.max(1, ...ETAPAS.map(e => enEmbudo.filter(p => p.etapa === e.key).length))
   const MODOS: [Modo, string][] = [['todo', 'Todo'], ['mes', 'Este mes'], ['mes_pasado', 'Mes pasado'], ['rango', 'Personalizado']]
 
   return (
@@ -425,7 +441,7 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
         </div>
         <div className="bd-funnel">
           {ETAPAS.map(et => {
-            const n = enPeriodo.filter(p => p.etapa === et.key).length
+            const n = enEmbudo.filter(p => p.etapa === et.key).length
             const col = ETAPA_COLOR[et.key]
             const on = filtro === et.key
             return (
@@ -469,7 +485,7 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
       <div className="bd-main">
         <section style={{ ...card, padding: 0, overflow: 'hidden' }} aria-label="Prospectos">
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', padding: '16px 18px 12px' }}>
-            <div style={{ ...cinzel(C.terra, 10) }}>Prospectos</div>
+            <div style={{ ...cinzel(C.terra, 10) }}>{verArchivados ? 'Archivados' : 'Prospectos'}</div>
             <span style={{ fontSize: '12px', color: C.muted }}>
               {filtro ? `${lista.length} en ${ETAPAS.find(e => e.key === filtro)?.label}` : `${lista.length} en total`} · clic para abrir la ficha
             </span>
@@ -477,6 +493,12 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
               title="Copia el brief de cada prospecto activo (entradas, respuestas y puntos clave)">
               {copiado ? 'Briefs copiados ✓' : 'Copiar briefs en curso'}
             </button>
+            {(archivados.length > 0 || verArchivados) && (
+              <button onClick={() => { setVerArchivados(v => !v); setFiltro(null) }} aria-pressed={verArchivados}
+                style={{ ...btn(false), padding: '6px 12px' }}>
+                {verArchivados ? 'Volver a los activos' : `Ver archivados (${archivados.length})`}
+              </button>
+            )}
           </div>
           <div style={{ overflowX: 'auto' }}>
             <table className="bd-ptable">
@@ -486,7 +508,7 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
               </tr></thead>
               <tbody>
                 {lista.length === 0 && (
-                  <tr><td colSpan={7} style={{ padding: '22px 18px', color: C.muted }}>{rango ? 'No hay prospectos con actividad en este periodo.' : 'No hay prospectos en esta etapa.'}</td></tr>
+                  <tr><td colSpan={7} style={{ padding: '22px 18px', color: C.muted }}>{verArchivados ? 'No hay prospectos archivados.' : rango ? 'No hay prospectos con actividad en este periodo.' : 'No hay prospectos en esta etapa.'}</td></tr>
                 )}
                 {lista.map(p => {
                   const q = p.quotes[0]
@@ -503,8 +525,10 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
                         {(() => {
                           const n = pendientes(p.actions ?? []).length
                           const l = ultimaLectura(p.insights ?? [])
-                          return (n > 0 || l?.temperatura) ? (
+                          return (n > 0 || l?.temperatura || p.es_prueba || p.archivado_el) ? (
                             <div style={{ display: 'flex', gap: '6px', marginTop: '5px', flexWrap: 'wrap' }}>
+                              {p.es_prueba && <Badge text="Prueba" color={C.gold} solid />}
+                              {p.archivado_el && <Badge text="Archivado" color={C.muted} />}
                               {n > 0 && <Badge text={`${n} por decidir`} color={C.mint} />}
                               {l?.temperatura && <Badge text={TEMPERATURA_LABEL[l.temperatura]} color={TEMP_COLOR[l.temperatura]} />}
                             </div>
@@ -557,7 +581,7 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
                   <button key={a.id} onClick={() => onOpen(p.id)} className="bd-mini"
                     style={{ textAlign: 'left', cursor: 'pointer', background: 'rgba(14,16,24,0.55)', border: '1px solid rgba(79,216,184,0.25)', borderRadius: '8px', padding: '10px 12px', color: C.parch }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
-                      <span style={{ fontWeight: 600, fontSize: '13px' }}>{p.short_name}</span>
+                      <span style={{ fontWeight: 600, fontSize: '13px' }}>{p.short_name}{p.es_prueba && <span style={{ color: C.gold, fontWeight: 500 }}> · prueba</span>}</span>
                       <span style={{ fontSize: '11px', fontWeight: 600, color: PRIO_COLOR[a.prioridad] }}>{a.prioridad}</span>
                     </div>
                     <div style={{ fontSize: '12px', color: C.parch, marginTop: '2px' }}>{a.accion}</div>
@@ -577,7 +601,7 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
                   <button key={p.id} onClick={() => onOpen(p.id)} className="bd-mini"
                     style={{ textAlign: 'left', cursor: 'pointer', background: venc ? 'rgba(224,122,95,0.10)' : 'rgba(14,16,24,0.55)', border: `1px solid ${venc ? 'rgba(224,122,95,0.45)' : 'rgba(255,255,255,0.06)'}`, borderRadius: '8px', padding: '10px 12px', color: C.parch }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
-                      <span style={{ fontWeight: 600, fontSize: '13px' }}>{p.short_name}</span>
+                      <span style={{ fontWeight: 600, fontSize: '13px' }}>{p.short_name}{p.es_prueba && <span style={{ color: C.gold, fontWeight: 500 }}> · prueba</span>}</span>
                       <span style={{ fontFamily: MONO, fontSize: '11px', color: venc ? C.danger : C.gold }}>{fmtFecha(p.proxima_fecha)}</span>
                     </div>
                     <div style={{ fontSize: '12px', color: venc ? C.danger : C.muted, marginTop: '2px' }}>{p.proxima_accion ?? '—'}{venc && ' · vencida'}</div>
@@ -641,6 +665,19 @@ function Ficha({ p, params, onClose, onNuevaCotizacion, onReload, onError }: {
   })
 
   const marcarEnviada = (id: string) => run(() => api('/api/bizdev/quotes', { method: 'PATCH', body: JSON.stringify({ id, estado: 'enviada' }) }))
+  const archivar = (archivado: boolean) => run(() => api('/api/bizdev/prospects', { method: 'PATCH', body: JSON.stringify({ id: p.id, archivado }) }))
+
+  // Mientras un contacto tenga la revisión del historial en curso, la ficha se refresca sola cada 10 s
+  // (hasta 10 min): el servicio trabaja en segundo plano y deja el resultado en la base.
+  const historialEnCurso = (p.contacts ?? []).some(c => estadoHistorial(c, Date.now()).estado === 'en_curso')
+  const reloadRef = useRef(onReload)
+  reloadRef.current = onReload
+  useEffect(() => {
+    if (!historialEnCurso) return
+    const t0 = Date.now()
+    const iv = setInterval(() => { if (Date.now() - t0 > 10 * 60000) clearInterval(iv); else reloadRef.current() }, 10000)
+    return () => clearInterval(iv)
+  }, [historialEnCurso])
   const brief = buildBrief(p, hoyISO())
   const [briefCopiado, setBriefCopiado] = useState(false)
   const copiarBrief = async () => {
@@ -661,6 +698,12 @@ function Ficha({ p, params, onClose, onNuevaCotizacion, onReload, onError }: {
         <div style={{ display: 'flex', alignItems: 'start', gap: '12px' }}>
           <div>
             <div style={{ ...cinzel(C.terra, 9), opacity: 0.85 }}>{p.code} · {tier}</div>
+            {(p.es_prueba || p.archivado_el) && (
+              <div style={{ display: 'flex', gap: '6px', marginTop: '6px', flexWrap: 'wrap' }}>
+                {p.es_prueba && <Badge text="Prueba · no cuenta en los indicadores" color={C.gold} solid />}
+                {p.archivado_el && <Badge text={`Archivado el ${fmtFecha(p.archivado_el)}`} color={C.muted} />}
+              </div>
+            )}
             <h2 style={{ fontFamily: "'EB Garamond',serif", fontWeight: 400, fontSize: '30px', margin: '6px 0 0' }}>{p.short_name}</h2>
             {p.full_name && <div style={{ color: C.muted, fontSize: '13px' }}>{p.full_name}</div>}
           </div>
@@ -720,6 +763,10 @@ function Ficha({ p, params, onClose, onNuevaCotizacion, onReload, onError }: {
             <button style={btn(true, !busy)} disabled={busy} onClick={guardar}>Guardar</button>
             <button style={btn(false)} onClick={onNuevaCotizacion}>Nueva cotización</button>
             <button style={btn(false)} onClick={() => setShowComm(v => !v)}>Registrar comunicación</button>
+            <button style={{ ...btn(false, !busy), marginLeft: 'auto' }} disabled={busy} onClick={() => archivar(!p.archivado_el)}
+              title={p.archivado_el ? 'Vuelve al dashboard y a los indicadores' : 'Sale del dashboard y de los indicadores; no cambia la etapa ni borra nada'}>
+              {p.archivado_el ? 'Desarchivar' : 'Archivar'}
+            </button>
           </div>
         </div>
 
@@ -867,33 +914,60 @@ function ContactosSeguimiento({ p, busy, run, onError }: {
   const [valor, setValor] = useState('')
   const [rol, setRol] = useState('')
   const personal = tipo === 'dominio' && esDominioPersonal(valor)
+  const [aviso, setAviso] = useState<string | null>(null)
+  // La revisión del historial la hace el servicio de comunicaciones; si no está conectado, el contacto
+  // queda guardado igual y el aviso lo dice (no es un error del alta).
+  const pedirHistorial = async (contactId: string) => {
+    try { await api('/api/bizdev/contacts/historial', { method: 'POST', body: JSON.stringify({ contact_id: contactId }) }); setAviso(null) }
+    catch (e) { setAviso(e instanceof Error ? e.message : 'No se pudo pedir la revisión del historial.') }
+  }
   const agregar = () => {
     let c: { tipo: string; valor: string }
     try { c = normalizarContacto(tipo, valor) } catch (e) { onError(e instanceof Error ? e.message : 'Contacto inválido'); return }
     return run(async () => {
-      await api('/api/bizdev/contacts', { method: 'POST', body: JSON.stringify({ prospect_id: p.id, ...c, rol: rol.trim() || null }) })
+      const r = await api<{ contact: Contacto }>('/api/bizdev/contacts', { method: 'POST', body: JSON.stringify({ prospect_id: p.id, ...c, rol: rol.trim() || null }) })
       setValor(''); setRol('')
+      // Al agregar un contacto se revisa su historial (Sam, 2026-11-04).
+      if (r.contact?.id) await pedirHistorial(r.contact.id)
     })
   }
+  const revisar = (id: string) => run(() => pedirHistorial(id))
   const quitar = (id: string) => run(() => api(`/api/bizdev/contacts?id=${id}`, { method: 'DELETE' }))
 
   return (
     <section style={{ ...card, display: 'grid', gap: '10px' }} aria-label="Contactos de seguimiento">
       <div style={{ ...cinzel(C.amatistaLight, 8) }}>Contactos de seguimiento de correo</div>
       <div style={{ fontSize: '12px', color: C.muted, lineHeight: 1.5 }}>
-        El servicio de comunicaciones sigue solo los correos de estas direcciones o dominios. Un correo que no es de ningún
-        prospecto no se registra: llega un aviso por Telegram para que lo revises.
+        El servicio de comunicaciones sigue solo los correos de estas direcciones o dominios. Al agregar un contacto se revisan
+        los últimos 12 meses de correos desde y hacia él. Un correo que no es de ningún prospecto no se registra: llega un aviso
+        por Telegram para que lo revises.
       </div>
       {contactos.length === 0 && <div style={{ fontSize: '12px', color: C.gold }}>Sin contactos: los correos de este prospecto no se siguen.</div>}
-      {contactos.map(c => (
-        <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
-          <Badge text={c.tipo === 'email' ? 'correo' : 'dominio'} color={c.tipo === 'email' ? C.mint : C.amatistaLight} />
-          <span style={{ fontFamily: MONO, fontSize: '12px', overflowWrap: 'anywhere' }}>{c.tipo === 'dominio' ? `@${c.valor}` : c.valor}</span>
-          {c.rol && <span style={{ color: C.muted, fontSize: '12px' }}>· {c.rol}</span>}
-          <button aria-label={`Quitar ${c.valor}`} disabled={busy} onClick={() => quitar(c.id)}
-            style={{ ...btn(false, !busy), marginLeft: 'auto', padding: '2px 8px', fontSize: '10px' }}>×</button>
-        </div>
-      ))}
+      {aviso && <div role="status" style={{ fontSize: '12px', color: C.gold }}>{aviso}</div>}
+      {contactos.map(c => {
+        const h = estadoHistorial(c, Date.now())
+        const col = h.estado === 'completado' ? C.mint : h.estado === 'en_curso' ? C.gold : h.estado === 'nunca' ? C.muted : C.danger
+        return (
+          <div key={c.id} style={{ display: 'grid', gap: '4px', padding: '8px 0', borderBottom: '1px solid rgba(92,52,114,0.18)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', flexWrap: 'wrap' }}>
+              <Badge text={c.tipo === 'email' ? 'correo' : 'dominio'} color={c.tipo === 'email' ? C.mint : C.amatistaLight} />
+              <span style={{ fontFamily: MONO, fontSize: '12px', overflowWrap: 'anywhere' }}>{c.tipo === 'dominio' ? `@${c.valor}` : c.valor}</span>
+              {c.rol && <span style={{ color: C.muted, fontSize: '12px' }}>· {c.rol}</span>}
+              <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: '6px' }}>
+                <button disabled={busy || !h.puedeRevisar} onClick={() => revisar(c.id)} title="Revisa los últimos 12 meses de correos desde y hacia este contacto"
+                  style={{ ...btn(false, !busy && h.puedeRevisar), padding: '3px 9px', fontSize: '8px', borderColor: 'rgba(79,216,184,0.5)', color: C.mint }}>
+                  {h.estado === 'nunca' ? 'Revisar historial' : 'Revisar de nuevo'}
+                </button>
+                <button aria-label={`Quitar ${c.valor}`} disabled={busy} onClick={() => quitar(c.id)}
+                  style={{ ...btn(false, !busy), padding: '2px 8px', fontSize: '10px' }}>×</button>
+              </span>
+            </div>
+            <div style={{ fontSize: '11px', color: col }}>
+              {h.texto}{h.estado === 'completado' && c.historial_terminado_el && <span style={{ color: C.muted }}> · {fmtFecha(c.historial_terminado_el)}</span>}
+            </div>
+          </div>
+        )
+      })}
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,110px) minmax(0,1fr)', gap: '8px' }}>
         <select aria-label="Tipo de contacto" style={{ ...inputStyle, cursor: 'pointer' }} value={tipo} onChange={e => setTipo(e.target.value as 'email' | 'dominio')}>
           <option value="email">Correo</option><option value="dominio">Dominio</option>
