@@ -45,7 +45,8 @@ interface Prospect {
   archivado_el?: string | null; es_prueba?: boolean
 }
 
-type View = 'dashboard' | 'calc' | 'prop'
+// 'seg' = tab Seguimiento (Sam, 2026-11-07: «el apartado de seguimiento se me hace pequeño e incómodo; conviértelo en un tab aparte»).
+type View = 'dashboard' | 'seg' | 'calc' | 'prop'
 
 const ETAPAS: { key: string; label: string }[] = [
   { key: 'contacto', label: 'Contacto' }, { key: 'levantamiento', label: 'Levantamiento' },
@@ -148,10 +149,12 @@ export default function BizDevPage() {
     setProspectId(p?.id ?? '')
     setPhName(p ? (p.full_name || p.short_name) : '')
     if (p) { setU(p.unidades ?? 0); setM2(Number(p.m2_privados ?? 0)); setCasas(p.es_casas) }
-    setExtra([]); setSel(REF_MARGIN_INDEX); setFichaId(null); setView('calc')
+    setExtra([]); setSel(REF_MARGIN_INDEX); setView('calc')
   }
 
-  const ficha = prospects.find(p => p.id === fichaId) ?? null
+  // Prospecto del tab Seguimiento: el elegido o, si no hay, el primero no archivado.
+  const ficha = prospects.find(p => p.id === fichaId) ?? prospects.find(p => !p.archivado_el) ?? prospects[0] ?? null
+  const abrirSeguimiento = (id: string) => { setFichaId(id); setView('seg') }
 
   return (
     <div style={{ minHeight: '100vh', background: C.carbonDark, color: C.parch, fontFamily: "'DM Sans',sans-serif", paddingBottom: '80px', position: 'relative', zIndex: 1 }}>
@@ -170,6 +173,9 @@ export default function BizDevPage() {
         @media (max-width:1100px){.bd-main{grid-template-columns:minmax(0,1fr)}.bd-funnel{grid-template-columns:repeat(4,minmax(0,1fr))}}
         @media (max-width:520px){.bd-funnel{grid-template-columns:repeat(2,minmax(0,1fr))}}
         @media (max-width:860px){.bd-kpi-hero{grid-column:1 / -1}}
+        .bd-seg{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:16px;align-items:start}
+        .bd-seg-col{display:grid;gap:16px;align-content:start;min-width:0}
+        @media (max-width:1000px){.bd-seg{grid-template-columns:minmax(0,1fr)}}
         .bd-calc{display:grid;grid-template-columns:minmax(0,360px) minmax(0,1fr);gap:16px;align-items:start}
         .bd-margins{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
         .bd-kpis{display:grid;grid-template-columns:1.4fr repeat(4,minmax(0,1fr));gap:12px}
@@ -200,7 +206,7 @@ export default function BizDevPage() {
       {/* Sub-navegación */}
       <div style={{ maxWidth: '1320px', margin: '0 auto', padding: '16px 28px 0' }}>
         <div role="tablist" style={{ display: 'flex', gap: 0, borderBottom: '1px solid rgba(255,255,255,0.06)', overflowX: 'auto' }}>
-          {([['dashboard', 'Dashboard'], ['calc', 'Calculadora'], ['prop', 'Propuesta']] as [View, string][]).map(([k, l]) => (
+          {([['dashboard', 'Dashboard'], ['seg', 'Seguimiento'], ['calc', 'Calculadora'], ['prop', 'Propuesta']] as [View, string][]).map(([k, l]) => (
             <button key={k} role="tab" aria-selected={view === k} onClick={() => setView(k)}
               style={{ background: 'none', border: 'none', borderBottom: `2px solid ${view === k ? C.terra : 'transparent'}`, padding: '10px 16px', cursor: 'pointer', ...cinzel(view === k ? C.terra : 'rgba(240,237,232,0.3)') }}>
               {l}
@@ -209,7 +215,7 @@ export default function BizDevPage() {
         </div>
       </div>
 
-      <main style={{ maxWidth: '1320px', margin: '0 auto', padding: '24px 28px', display: 'grid', gap: '16px' }}>
+      <main style={{ maxWidth: '1320px', margin: '0 auto', padding: '24px 28px', display: 'grid', gridTemplateColumns: 'minmax(0,1fr)', gap: '16px' }}>
         {error && (
           <div role="alert" style={{ background: 'rgba(196,98,45,0.07)', border: '1px solid rgba(196,98,45,0.25)', borderLeft: `3px solid ${C.terra}`, borderRadius: '8px', padding: '14px 18px', fontSize: '13px', color: C.terra }}>
             {error}
@@ -218,7 +224,16 @@ export default function BizDevPage() {
         {loading && <div style={{ ...cinzel(C.muted) }}>Cargando…</div>}
 
         {!loading && params && view === 'dashboard' && (
-          <Dashboard params={params} prospects={prospects} onOpen={setFichaId} onReload={reload} onError={setError} />
+          <Dashboard params={params} prospects={prospects} onOpen={abrirSeguimiento} onReload={reload} onError={setError} />
+        )}
+        {!loading && params && view === 'seg' && (
+          ficha ? (
+            <Ficha
+              key={ficha.id} p={ficha} params={params} prospects={prospects} onSelect={setFichaId}
+              onClose={() => setView('dashboard')}
+              onNuevaCotizacion={() => openCalcFor(ficha)} onReload={reload} onError={setError}
+            />
+          ) : <div style={{ ...card, color: C.muted, fontSize: '13px' }}>Todavía no hay prospectos. Créalos desde el Dashboard.</div>
         )}
         {!loading && params && result && view === 'calc' && (
           <Calculadora
@@ -243,12 +258,6 @@ export default function BizDevPage() {
         )}
       </main>
 
-      {ficha && params && (
-        <Ficha
-          p={ficha} params={params} onClose={() => setFichaId(null)}
-          onNuevaCotizacion={() => openCalcFor(ficha)} onReload={reload} onError={setError}
-        />
-      )}
     </div>
   )
 }
@@ -633,8 +642,9 @@ function Dashboard({ params, prospects, onOpen, onReload, onError }: {
 
 // ════════════════════════════════════════════════════════════════
 // FICHA DEL PROSPECTO
-function Ficha({ p, params, onClose, onNuevaCotizacion, onReload, onError }: {
-  p: Prospect; params: FeeParams; onClose: () => void; onNuevaCotizacion: () => void
+function Ficha({ p, params, prospects, onSelect, onClose, onNuevaCotizacion, onReload, onError }: {
+  p: Prospect; params: FeeParams; prospects: Prospect[]; onSelect: (id: string) => void
+  onClose: () => void; onNuevaCotizacion: () => void
   onReload: () => Promise<void>; onError: (e: string | null) => void
 }) {
   const [etapa, setEtapa] = useState(p.etapa)
@@ -645,10 +655,6 @@ function Ficha({ p, params, onClose, onNuevaCotizacion, onReload, onError }: {
   const [busy, setBusy] = useState(false)
 
   useEffect(() => { setEtapa(p.etapa); setAccion(p.proxima_accion ?? ''); setFecha(p.proxima_fecha ?? '') }, [p])
-  useEffect(() => {
-    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k)
-  }, [onClose])
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true); onError(null)
@@ -691,12 +697,26 @@ function Ficha({ p, params, onClose, onNuevaCotizacion, onReload, onError }: {
   const tier = p.unidades != null ? TIER_NOMBRES[tierFromSize(params, p.unidades, Number(p.m2_privados ?? 0), p.es_casas)] : '—'
 
   return (
-    <div role="dialog" aria-modal="true" aria-label={`Ficha de ${p.short_name}`} onClick={onClose}
-      style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(8,6,14,0.7)', display: 'flex', justifyContent: 'flex-end' }}>
-      <div onClick={e => e.stopPropagation()}
-        style={{ width: 'min(560px,100%)', height: '100%', overflowY: 'auto', background: C.carbonDark, borderLeft: `1px solid ${C.line}`, padding: '28px', display: 'grid', gap: '16px', alignContent: 'start' }}>
-        <div style={{ display: 'flex', alignItems: 'start', gap: '12px' }}>
-          <div>
+    <section aria-label={`Seguimiento de ${p.short_name}`} style={{ display: 'grid', gap: '16px', minWidth: 0 }}>
+      {/* Selector de prospecto */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+        <button onClick={onClose} style={{ ...btn(false), padding: '6px 12px' }}>← Dashboard</button>
+        <label htmlFor="seg-prospecto" style={{ ...cinzel(C.label, 8) }}>Prospecto</label>
+        <div style={{ flex: '1 1 220px', maxWidth: '420px', minWidth: 0 }}>
+        <select id="seg-prospecto" value={p.id} onChange={e => onSelect(e.target.value)}
+          style={{ ...inputStyle, width: '100%', minWidth: 0, cursor: 'pointer' }}>
+          {prospects.filter(x => !x.archivado_el).map(x => <option key={x.id} value={x.id}>{x.short_name} · {x.code}{x.es_prueba ? ' · prueba' : ''}</option>)}
+          {prospects.some(x => x.archivado_el) && (
+            <optgroup label="Archivados">
+              {prospects.filter(x => x.archivado_el).map(x => <option key={x.id} value={x.id}>{x.short_name} · {x.code}</option>)}
+            </optgroup>
+          )}
+        </select>
+        </div>
+      </div>
+
+      <div style={{ ...card, padding: '22px 24px', display: 'flex', alignItems: 'start', gap: '16px', flexWrap: 'wrap', borderTop: `3px solid ${ETAPA_COLOR[p.etapa] ?? C.terra}` }}>
+          <div style={{ minWidth: 0 }}>
             <div style={{ ...cinzel(C.terra, 9), opacity: 0.85 }}>{p.code} · {tier}</div>
             {(p.es_prueba || p.archivado_el) && (
               <div style={{ display: 'flex', gap: '6px', marginTop: '6px', flexWrap: 'wrap' }}>
@@ -704,12 +724,97 @@ function Ficha({ p, params, onClose, onNuevaCotizacion, onReload, onError }: {
                 {p.archivado_el && <Badge text={`Archivado el ${fmtFecha(p.archivado_el)}`} color={C.muted} />}
               </div>
             )}
-            <h2 style={{ fontFamily: "'EB Garamond',serif", fontWeight: 400, fontSize: '30px', margin: '6px 0 0' }}>{p.short_name}</h2>
+            <h2 style={{ fontFamily: "'EB Garamond',serif", fontWeight: 400, fontSize: '36px', margin: '6px 0 0' }}>{p.short_name}</h2>
             {p.full_name && <div style={{ color: C.muted, fontSize: '13px' }}>{p.full_name}</div>}
           </div>
-          <button aria-label="Cerrar" onClick={onClose} style={{ marginLeft: 'auto', ...btn(false) }}>×</button>
-        </div>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <Badge text={ETAPAS.find(e => e.key === p.etapa)?.label ?? p.etapa} color={ETAPA_COLOR[p.etapa] ?? C.terra} />
+            {ultimaEnviada(p) && <span style={{ fontFamily: MONO, fontSize: '18px', fontWeight: 700, color: C.terra }}>${usd(Number(ultimaEnviada(p)!.honorario))}<span style={{ fontSize: '11px', color: C.muted, fontWeight: 400 }}> /mes</span></span>}
+          </div>
+      </div>
 
+      <div className="bd-seg">
+      <div className="bd-seg-col">
+        <div style={{ ...card, display: 'grid', gap: '10px', borderTop: `3px solid ${C.terra}` }}>
+          <div style={{ ...cinzel(C.terra, 9) }}>Etapa y próxima acción</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: '10px' }}>
+            <div><label style={label} htmlFor="f-etapa">Etapa</label>
+              <select id="f-etapa" style={{ ...inputStyle, cursor: 'pointer' }} value={etapa} onChange={e => setEtapa(e.target.value)}>
+                {ETAPAS.map(e => <option key={e.key} value={e.key}>{e.label}</option>)}
+              </select></div>
+            <div><label style={label} htmlFor="f-fecha">Fecha</label>
+              <input id="f-fecha" type="date" style={{ ...numInput, colorScheme: 'dark' }} value={fecha} onChange={e => setFecha(e.target.value)} /></div>
+          </div>
+          <div><label style={label} htmlFor="f-accion">Próxima acción</label>
+            <input id="f-accion" style={inputStyle} value={accion} onChange={e => setAccion(e.target.value)} /></div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <button style={btn(true, !busy)} disabled={busy} onClick={guardar}>Guardar</button>
+            <button style={btn(false)} onClick={onNuevaCotizacion}>Nueva cotización</button>
+            <button style={btn(false)} onClick={() => setShowComm(v => !v)}>Registrar comunicación</button>
+            <button style={{ ...btn(false, !busy), marginLeft: 'auto' }} disabled={busy} onClick={() => archivar(!p.archivado_el)}
+              title={p.archivado_el ? 'Vuelve al dashboard y a los indicadores' : 'Sale del dashboard y de los indicadores; no cambia la etapa ni borra nada'}>
+              {p.archivado_el ? 'Desarchivar' : 'Archivar'}
+            </button>
+          </div>
+        </div>
+        {showComm && (
+          <div style={{ ...card, display: 'grid', gap: '10px' }}>
+            <div style={{ ...cinzel(C.amatistaLight, 8) }}>Registrar comunicación</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+              <div><label style={label} htmlFor="c-fecha">Fecha</label>
+                <input id="c-fecha" type="date" style={numInput} value={comm.fecha} onChange={e => setComm({ ...comm, fecha: e.target.value })} /></div>
+              <div><label style={label} htmlFor="c-canal">Canal</label>
+                <select id="c-canal" style={inputStyle} value={comm.canal} onChange={e => setComm({ ...comm, canal: e.target.value })}>
+                  {CANALES.map(c => <option key={c} value={c}>{CANAL_LABEL[c]}</option>)}
+                </select></div>
+              <div><label style={label} htmlFor="c-sentido">Sentido</label>
+                <select id="c-sentido" style={inputStyle} value={comm.sentido} onChange={e => setComm({ ...comm, sentido: e.target.value })}>
+                  {SENTIDOS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select></div>
+            </div>
+            <div><label style={label} htmlFor="c-resumen">Resumen (tus palabras)</label>
+              <textarea id="c-resumen" rows={3} style={{ ...inputStyle, resize: 'vertical' }} value={comm.resumen} onChange={e => setComm({ ...comm, resumen: e.target.value })} /></div>
+            <div><label style={label} htmlFor="c-doc">Enlace al documento (opcional)</label>
+              <input id="c-doc" style={inputStyle} value={comm.doc_ref} onChange={e => setComm({ ...comm, doc_ref: e.target.value })} /></div>
+            <button style={btn(true, !!comm.resumen.trim() && !busy)} disabled={!comm.resumen.trim() || busy} onClick={registrar}>Registrar</button>
+          </div>
+        )}
+
+        <LecturaCorreos p={p} busy={busy} run={run} />
+        <div style={{ ...card, display: 'grid', gap: '10px' }}>
+          <div style={{ ...cinzel(C.terra, 9) }}>Línea de tiempo</div>
+          {timeline.length === 0 && <div style={{ color: C.faint, fontSize: '13px' }}>Sin registros.</div>}
+          {timeline.map(it => it.kind === 'comm' ? (
+            <div key={`c-${it.c.id}`} style={{ borderLeft: `2px solid ${it.c.sentido === 'interno' ? C.amatista : it.c.sentido === 'recibido' ? C.mint : C.terra}`, paddingLeft: '12px', display: 'grid', gap: '2px' }}>
+              <div style={{ fontSize: '11px', color: C.muted }}>
+                <span style={{ fontFamily: MONO }}>{fmtFecha(it.c.fecha)}</span> · {CANAL_LABEL[it.c.canal] ?? it.c.canal} · {it.c.sentido}
+                {it.c.origen !== 'manual' && ` · ${it.c.origen === 'document_factory' ? 'Document Factory' : it.c.origen === 'communications_service' ? 'lectura de correo' : it.c.origen}`}
+              </div>
+              <div style={{ fontSize: '13px' }}>
+                {it.c.doc_ref
+                  ? <a href={it.c.doc_ref} target="_blank" rel="noreferrer" style={{ color: C.parch }}>{it.c.resumen} ↗</a>
+                  : it.c.resumen}
+              </div>
+            </div>
+          ) : (
+            <div key={`q-${it.q.id}`} style={{ borderLeft: `2px solid ${C.amatistaLight}`, paddingLeft: '12px', display: 'grid', gap: '2px' }}>
+              <div style={{ fontSize: '11px', color: C.muted }}><span style={{ fontFamily: MONO }}>{fmtFecha(it.q.created_at)}</span> · Cotización · {it.q.estado}</div>
+              <div style={{ fontSize: '13px', fontFamily: MONO }}>
+                ${usd(Number(it.q.honorario))} · {margenDe(it.q)} · {it.q.origen === 'manual' ? 'carta previa al modelo' : it.q.params_version}
+                {Array.isArray(it.q.personal_extra) && it.q.personal_extra.length > 0 && ' · con personal adicional'}
+              </div>
+              {it.q.estado === 'borrador' && (
+                <button disabled={busy} onClick={() => marcarEnviada(it.q.id)}
+                  style={{ ...btn(false), justifySelf: 'start', padding: '4px 10px', fontSize: '8px', borderColor: 'rgba(79,216,184,0.5)', color: C.mint }}>
+                  Marcar como enviada
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="bd-seg-col">
         <div style={card}>
           <div style={{ ...cinzel(C.amatistaLight, 8), marginBottom: '10px' }}>Tamaño</div>
           <dl style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 16px', margin: 0, fontSize: '13px' }}>
@@ -743,89 +848,10 @@ function Ficha({ p, params, onClose, onNuevaCotizacion, onReload, onError }: {
           ))}
         </section>
 
-        <LecturaCorreos p={p} busy={busy} run={run} />
-
         <ContactosSeguimiento p={p} busy={busy} run={run} onError={onError} />
-
-        <div style={{ ...card, display: 'grid', gap: '10px' }}>
-          <div style={{ ...cinzel(C.amatistaLight, 8) }}>Seguimiento</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-            <div><label style={label} htmlFor="f-etapa">Etapa</label>
-              <select id="f-etapa" style={{ ...inputStyle, cursor: 'pointer' }} value={etapa} onChange={e => setEtapa(e.target.value)}>
-                {ETAPAS.map(e => <option key={e.key} value={e.key}>{e.label}</option>)}
-              </select></div>
-            <div><label style={label} htmlFor="f-fecha">Fecha</label>
-              <input id="f-fecha" type="date" style={numInput} value={fecha} onChange={e => setFecha(e.target.value)} /></div>
-          </div>
-          <div><label style={label} htmlFor="f-accion">Próxima acción</label>
-            <input id="f-accion" style={inputStyle} value={accion} onChange={e => setAccion(e.target.value)} /></div>
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            <button style={btn(true, !busy)} disabled={busy} onClick={guardar}>Guardar</button>
-            <button style={btn(false)} onClick={onNuevaCotizacion}>Nueva cotización</button>
-            <button style={btn(false)} onClick={() => setShowComm(v => !v)}>Registrar comunicación</button>
-            <button style={{ ...btn(false, !busy), marginLeft: 'auto' }} disabled={busy} onClick={() => archivar(!p.archivado_el)}
-              title={p.archivado_el ? 'Vuelve al dashboard y a los indicadores' : 'Sale del dashboard y de los indicadores; no cambia la etapa ni borra nada'}>
-              {p.archivado_el ? 'Desarchivar' : 'Archivar'}
-            </button>
-          </div>
-        </div>
-
-        {showComm && (
-          <div style={{ ...card, display: 'grid', gap: '10px' }}>
-            <div style={{ ...cinzel(C.amatistaLight, 8) }}>Registrar comunicación</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
-              <div><label style={label} htmlFor="c-fecha">Fecha</label>
-                <input id="c-fecha" type="date" style={numInput} value={comm.fecha} onChange={e => setComm({ ...comm, fecha: e.target.value })} /></div>
-              <div><label style={label} htmlFor="c-canal">Canal</label>
-                <select id="c-canal" style={inputStyle} value={comm.canal} onChange={e => setComm({ ...comm, canal: e.target.value })}>
-                  {CANALES.map(c => <option key={c} value={c}>{CANAL_LABEL[c]}</option>)}
-                </select></div>
-              <div><label style={label} htmlFor="c-sentido">Sentido</label>
-                <select id="c-sentido" style={inputStyle} value={comm.sentido} onChange={e => setComm({ ...comm, sentido: e.target.value })}>
-                  {SENTIDOS.map(s => <option key={s} value={s}>{s}</option>)}
-                </select></div>
-            </div>
-            <div><label style={label} htmlFor="c-resumen">Resumen (tus palabras)</label>
-              <textarea id="c-resumen" rows={3} style={{ ...inputStyle, resize: 'vertical' }} value={comm.resumen} onChange={e => setComm({ ...comm, resumen: e.target.value })} /></div>
-            <div><label style={label} htmlFor="c-doc">Enlace al documento (opcional)</label>
-              <input id="c-doc" style={inputStyle} value={comm.doc_ref} onChange={e => setComm({ ...comm, doc_ref: e.target.value })} /></div>
-            <button style={btn(true, !!comm.resumen.trim() && !busy)} disabled={!comm.resumen.trim() || busy} onClick={registrar}>Registrar</button>
-          </div>
-        )}
-
-        <div style={{ display: 'grid', gap: '10px' }}>
-          <div style={{ ...cinzel(C.terra, 9) }}>Línea de tiempo</div>
-          {timeline.length === 0 && <div style={{ color: C.faint, fontSize: '13px' }}>Sin registros.</div>}
-          {timeline.map(it => it.kind === 'comm' ? (
-            <div key={`c-${it.c.id}`} style={{ borderLeft: `2px solid ${it.c.sentido === 'interno' ? C.amatista : it.c.sentido === 'recibido' ? C.mint : C.terra}`, paddingLeft: '12px', display: 'grid', gap: '2px' }}>
-              <div style={{ fontSize: '11px', color: C.muted }}>
-                <span style={{ fontFamily: MONO }}>{fmtFecha(it.c.fecha)}</span> · {CANAL_LABEL[it.c.canal] ?? it.c.canal} · {it.c.sentido}
-                {it.c.origen !== 'manual' && ` · ${it.c.origen === 'document_factory' ? 'Document Factory' : it.c.origen === 'communications_service' ? 'lectura de correo' : it.c.origen}`}
-              </div>
-              <div style={{ fontSize: '13px' }}>
-                {it.c.doc_ref
-                  ? <a href={it.c.doc_ref} target="_blank" rel="noreferrer" style={{ color: C.parch }}>{it.c.resumen} ↗</a>
-                  : it.c.resumen}
-              </div>
-            </div>
-          ) : (
-            <div key={`q-${it.q.id}`} style={{ borderLeft: `2px solid ${C.amatistaLight}`, paddingLeft: '12px', display: 'grid', gap: '2px' }}>
-              <div style={{ fontSize: '11px', color: C.muted }}><span style={{ fontFamily: MONO }}>{fmtFecha(it.q.created_at)}</span> · Cotización · {it.q.estado}</div>
-              <div style={{ fontSize: '13px', fontFamily: MONO }}>
-                ${usd(Number(it.q.honorario))} · {margenDe(it.q)} · {it.q.origen === 'manual' ? 'carta previa al modelo' : it.q.params_version}
-                {Array.isArray(it.q.personal_extra) && it.q.personal_extra.length > 0 && ' · con personal adicional'}
-              </div>
-              {it.q.estado === 'borrador' && (
-                <button disabled={busy} onClick={() => marcarEnviada(it.q.id)}
-                  style={{ ...btn(false), justifySelf: 'start', padding: '4px 10px', fontSize: '8px', borderColor: 'rgba(79,216,184,0.5)', color: C.mint }}>
-                  Marcar como enviada
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
       </div>
-    </div>
+      </div>
+    </section>
   )
 }
 
